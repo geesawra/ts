@@ -93,7 +93,12 @@
         </div>
       </div>
       <p id="result-count" class="small" role="status">0 results</p>
-      <div class="table-responsive" role="region" aria-label="Search results, horizontally scrollable" tabindex="0">
+      <div class="mobile-sort-controls mb-3">
+        <label for="mobile-sort">Sort by</label>
+        <select id="mobile-sort" class="form-control"></select>
+        <button id="mobile-sort-direction" type="button" class="btn-outline theme-secondary">Descending ↓</button>
+      </div>
+      <div class="table-responsive results-container" role="region" aria-label="Search results" tabindex="0">
         <table class="table table-striped table-hover result-table">
           <caption>Sort the current page using the column headings. Choose a Transmission destination, then Add to start downloading.</caption>
           <thead>
@@ -111,6 +116,7 @@
           <tbody id="result-rows"><tr><td colspan="8">No search yet.</td></tr></tbody>
         </table>
       </div>
+      <div id="result-cards" class="result-cards"></div>
       <nav class="d-flex flex-wrap gap-2 align-items-center mt-3" aria-label="Search pagination">
         <button id="previous-page" class="btn-outline theme-secondary" type="button" disabled>Previous page</button>
         <button id="next-page" class="btn-outline theme-secondary" type="button" disabled>Next page</button>

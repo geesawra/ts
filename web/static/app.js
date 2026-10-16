@@ -21,6 +21,13 @@
     ['title', 'Title'], ['indexer', 'Tracker'], ['size', 'Size'],
     ['seeders', 'Seeds'], ['peers', 'Peers'], ['published', 'Age'],
   ]);
+  for (const [key, label] of sortLabels) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = label;
+    byId('mobile-sort').append(option);
+  }
+  const compactResults = window.matchMedia('(width < 75rem)');
   const state = {
     indexers: [], endpoints: [], results: [], errors: [], fields: new Map(),
     fieldValues: new Map(), downloads: new Map(), destinations: new Map(), controller: null, generation: 0,
@@ -342,26 +349,38 @@
       button.parentElement.setAttribute('aria-sort', active ? (state.direction === 'asc' ? 'ascending' : 'descending') : 'none');
       button.textContent = sortLabels.get(button.dataset.sort) + (active ? (state.direction === 'asc' ? ' ↑' : ' ↓') : '');
     }
+    byId('mobile-sort').value = state.sort;
+    const direction = byId('mobile-sort-direction');
+    direction.textContent = state.direction === 'asc' ? 'Ascending ↑' : 'Descending ↓';
+    direction.setAttribute('aria-label', `Sort ${state.direction === 'asc' ? 'ascending; switch to descending' : 'descending; switch to ascending'}`);
     byId('result-count').textContent = `${results.length} shown / ${state.results.length} returned on this page`;
     const body = byId('result-rows');
+    const cards = byId('result-cards');
     body.replaceChildren();
+    cards.replaceChildren();
     if (!results.length) {
-      const row = element('tr');
-      const cell = element('td', emptyText || (state.results.length ? 'No releases match the page filters.' : state.searched ? 'No releases returned.' : 'No search yet.'));
-      cell.colSpan = 8;
-      row.append(cell);
-      body.append(row);
+      const text = emptyText || (state.results.length ? 'No releases match the page filters.' : state.searched ? 'No releases returned.' : 'No search yet.');
+      if (compactResults.matches) {
+        cards.append(element('p', text));
+      } else {
+        const row = element('tr');
+        const cell = element('td', text);
+        cell.colSpan = 8;
+        row.append(cell);
+        body.append(row);
+      }
     }
-    for (const result of results) body.append(resultRow(result));
+    for (const result of results) {
+      if (compactResults.matches) cards.append(resultCard(result));
+      else body.append(resultRow(result));
+    }
     const offset = Number(state.lastSearch?.get('offset')) || 0;
     const limit = Number(state.lastSearch?.get('limit')) || Number(byId('limit').value) || 100;
     byId('page-info').textContent = `Offset ${offset.toLocaleString()} · up to ${limit.toLocaleString()} results per indexer`;
   }
 
-  function resultRow(result) {
-    const row = element('tr');
-    const title = element('td');
-    title.append(element('div', result.title || '(Untitled release)', 'result-title'));
+  function appendResultTitle(container, result) {
+    container.append(element('div', result.title || '(Untitled release)', 'result-title'));
     const detailsURL = safeDetails(result.details);
     if (detailsURL) {
       const link = element('a', 'Details', 'small');
@@ -369,21 +388,56 @@
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.setAttribute('aria-label', `Details for ${result.title} (opens in a new tab)`);
-      title.append(link);
+      container.append(link);
     }
+  }
+
+  function appendResultFactors(container, result) {
+    container.append(element('div', (result.categories || []).join(', ') || 'No categories', 'result-meta'));
+    const factorText = (value) => Number.isFinite(value) ? `${value.toLocaleString()}×` : 'unknown';
+    container.append(element('div', `Download ${factorText(result.download_volume_factor)} · Upload ${factorText(result.upload_volume_factor)}`, 'result-meta'));
+  }
+
+  function resultRow(result) {
+    const row = element('tr');
+    const title = element('td');
+    appendResultTitle(title, result);
     const age = element('td', ageText(result.published));
     if (Number.isFinite(Date.parse(result.published))) age.title = new Date(result.published).toLocaleString();
     const factors = element('td');
-    factors.append(element('div', (result.categories || []).join(', ') || 'No categories', 'result-meta'));
-    const factorText = (value) => Number.isFinite(value) ? `${value.toLocaleString()}×` : 'unknown';
-    factors.append(element('div', `Download ${factorText(result.download_volume_factor)} · Upload ${factorText(result.upload_volume_factor)}`, 'result-meta'));
-    row.append(title, element('td', result.indexer || result.indexer_id || 'Unknown'), element('td', sizeText(result.size)), element('td', Number(result.seeders) || 0), element('td', Number(result.peers) || 0), age, factors);
-    row.append(downloadActions(result));
+    appendResultFactors(factors, result);
+    row.append(title, element('td', result.indexer || result.indexer_id || 'Unknown'), element('td', sizeText(result.size)), element('td', Number(result.seeders) || 0), element('td', Number(result.peers) || 0), age, factors, downloadActions(result));
     return row;
   }
 
-  function downloadActions(result) {
-    const cell = element('td', undefined, 'result-actions');
+  function resultCard(result) {
+    const card = element('article', undefined, 'result-card');
+    card.setAttribute('aria-label', result.title || 'Untitled release');
+    const title = element('header');
+    appendResultTitle(title, result);
+    const metadata = element('dl', undefined, 'result-card-metadata');
+    for (const [label, value] of [
+      ['Tracker', result.indexer || result.indexer_id || 'Unknown'],
+      ['Size', sizeText(result.size)],
+      ['Seeds', Number(result.seeders) || 0],
+      ['Peers', Number(result.peers) || 0],
+      ['Age', ageText(result.published)],
+    ]) {
+      const group = element('div');
+      group.append(element('dt', label), element('dd', value));
+      metadata.append(group);
+    }
+    const factors = element('div', undefined, 'result-card-factors');
+    const values = element('dd');
+    appendResultFactors(values, result);
+    factors.append(element('dt', 'Categories / factors'), values);
+    metadata.append(factors);
+    card.append(title, metadata, downloadActions(result, 'div'));
+    return card;
+  }
+
+  function downloadActions(result, tag = 'td') {
+    const cell = element(tag, undefined, 'result-actions');
     if (!result.has_magnet && !result.has_torrent) {
       cell.append(element('p', 'No download available.', 'small'));
       return cell;
@@ -576,7 +630,19 @@
       if (state.lastSearch) persistURL(state.lastSearch, false);
     });
   }
+  byId('mobile-sort').addEventListener('change', (event) => {
+    state.sort = event.target.value;
+    state.direction = state.sort === 'title' || state.sort === 'indexer' ? 'asc' : 'desc';
+    renderResults();
+    if (state.lastSearch) persistURL(state.lastSearch, false);
+  });
+  byId('mobile-sort-direction').addEventListener('click', () => {
+    state.direction = state.direction === 'asc' ? 'desc' : 'asc';
+    renderResults();
+    if (state.lastSearch) persistURL(state.lastSearch, false);
+  });
   byId('retry-setup').addEventListener('click', setup);
+  compactResults.addEventListener('change', () => renderResults());
   window.addEventListener('popstate', () => {
     cancelSearch();
     if (restoreURL()) search(false);

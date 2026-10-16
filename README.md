@@ -2,7 +2,7 @@
 
 Search Jackett and send torrents to named Transmission instances. A single Go binary with a simple, light/dark-aware Bootstrap 6 UI.
 
-- Tracker/category filters, optional advanced search, sorting and pagination.
+- Tracker/category filters, optional advanced search, sorting and pagination. Native result cards on smaller screens; a table on desktop.
 - Choose a Transmission destination, then click **Add**.
 - Configure everything in TOML; credentials stay server-side.
 
