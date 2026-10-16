@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ts — Torrent search</title>
+  <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#search">Skip to search</a>
+  <main class="container py-4">
+    <header class="mb-4">
+      <h1>ts <small class="app-subtitle">Torrent search</small></h1>
+    </header>
+    <noscript><p class="alert theme-warning">JavaScript is required to search and add downloads.</p></noscript>
+    <div id="app-error" class="alert theme-danger" role="alert" hidden></div>
+    <button id="retry-setup" class="btn-outline theme-secondary mb-3" type="button" hidden>Retry connection</button>
+    <form id="search" aria-label="Torrent search">
+      <fieldset id="search-controls" disabled>
+        <legend class="h4">Search</legend>
+        <div class="query-controls">
+          <div class="query-field">
+            <label class="form-label" for="query">Query</label>
+            <input id="query" name="q" class="form-control" type="search" autocomplete="off" aria-describedby="query-help">
+          </div>
+          <button id="search-button" class="btn-solid theme-primary" type="submit">Search</button>
+          <button id="cancel-search" class="btn-outline theme-secondary" type="button" hidden>Cancel search</button>
+        </div>
+        <p id="query-help" class="form-text mb-3">Leave empty for the latest releases.</p>
+        <div class="row g-3">
+          <div class="col-12 md:col-6">
+            <fieldset>
+              <legend class="form-label">Indexers</legend>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <button id="select-all" type="button" class="btn-outline theme-secondary btn-sm">Select all</button>
+                <button id="select-none" type="button" class="btn-outline theme-secondary btn-sm">Clear selection</button>
+              </div>
+              <div id="indexer-list" class="choice-list"></div>
+            </fieldset>
+          </div>
+          <div class="col-12 md:col-6">
+            <fieldset aria-describedby="category-help">
+              <legend class="form-label">Categories</legend>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <button id="clear-categories" type="button" class="btn-outline theme-secondary btn-sm">All categories</button>
+              </div>
+              <div id="categories" class="choice-list"></div>
+              <p id="category-help" class="form-text">No boxes checked means all categories.</p>
+            </fieldset>
+          </div>
+        </div>
+        <p id="capability-note" class="mt-2" role="status" hidden></p>
+        <details id="advanced" class="my-3">
+          <summary>Advanced search options</summary>
+          <div class="row g-3 mt-2">
+            <div class="col-12 md:col-6">
+              <label class="form-label" for="mode">Search mode</label>
+              <select id="mode" name="t" class="form-control"></select>
+            </div>
+            <div class="col-6 md:col-3">
+              <label class="form-label" for="limit">Results per indexer</label>
+              <input id="limit" name="limit" class="form-control" type="number" min="1" max="1000" step="1" value="100" required>
+            </div>
+            <div class="col-6 md:col-3">
+              <label class="form-label" for="offset">Offset per indexer</label>
+              <input id="offset" name="offset" class="form-control" type="number" min="0" step="1" value="0" required>
+            </div>
+          </div>
+          <p class="form-text mt-2">Fields depend on the selected mode and trackers. Disabled fields are not sent. IDs use the indexer's Torznab format.</p>
+          <div id="advanced-fields" class="row g-3"></div>
+          <details class="mt-3">
+            <summary>Indexer capabilities</summary>
+            <div id="capabilities" class="capabilities mt-2"></div>
+          </details>
+        </details>
+      </fieldset>
+    </form>
+    <section id="results-section" class="mt-4" aria-labelledby="results-heading" aria-busy="false">
+      <h2 id="results-heading" class="h4">Results</h2>
+      <p id="search-status" role="status" aria-live="polite">Choose indexers and search. An empty query is welcome.</p>
+      <div id="search-errors" class="alert theme-warning" role="alert" hidden></div>
+      <div class="row g-3 mb-3">
+        <div class="col-12 md:col-8">
+          <label class="form-label" for="result-filter">Filter this page by title, tracker, or category</label>
+          <input id="result-filter" type="search" class="form-control" autocomplete="off">
+        </div>
+        <div class="col-12 md:col-4">
+          <label class="form-label" for="min-seeds">Minimum seeds on this page</label>
+          <input id="min-seeds" type="number" class="form-control" min="0" step="1" value="0">
+        </div>
+      </div>
+      <p id="result-count" class="small" role="status">0 results</p>
+      <div class="table-responsive" role="region" aria-label="Search results, horizontally scrollable" tabindex="0">
+        <table class="table table-striped table-hover result-table">
+          <caption>Sort the current page using the column headings. Choose a Transmission destination, then Add to start downloading.</caption>
+          <thead>
+            <tr>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="title">Title</button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="indexer">Tracker</button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="size">Size</button></th>
+              <th scope="col" aria-sort="descending"><button type="button" class="sort-button" data-sort="seeders">Seeds ↓</button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="peers">Peers</button></th>
+              <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="published">Age</button></th>
+              <th scope="col">Categories / factors</th>
+              <th scope="col">Download</th>
+            </tr>
+          </thead>
+          <tbody id="result-rows"><tr><td colspan="8">No search yet.</td></tr></tbody>
+        </table>
+      </div>
+      <nav class="d-flex flex-wrap gap-2 align-items-center mt-3" aria-label="Search pagination">
+        <button id="previous-page" class="btn-outline theme-secondary" type="button" disabled>Previous page</button>
+        <button id="next-page" class="btn-outline theme-secondary" type="button" disabled>Next page</button>
+        <span id="page-info" class="small">Offset 0</span>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

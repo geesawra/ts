@@ -1,0 +1,42 @@
+# Copy this file to config.toml and replace the Jackett API key.
+# Keep configuration files private: they contain service credentials.
+# Unknown fields are rejected, so misspelled settings cannot silently go unused.
+
+[server]
+# Bind locally by default. Use a reverse proxy with HTTPS for remote access.
+listen = "127.0.0.1:8080"
+# Optional browser/API HTTP Basic authentication: set both values or neither.
+# Basic authentication requires HTTPS when used over an untrusted network.
+# username = "ts"
+# password = "replace-with-a-long-random-password"
+
+[jackett]
+# Base URL, including any reverse-proxy path prefix (not the Torznab API path).
+# URLs must use HTTP(S), without embedded credentials, query, or fragment.
+url = "http://127.0.0.1:9117"
+# Find this key on the Jackett dashboard.
+api_key = "replace-with-your-jackett-api-key"
+# Optional positive request timeout in seconds; the default is 60.
+timeout_seconds = 60
+
+# Define at least one Transmission endpoint. Names must be nonempty and unique;
+# each name appears as a download destination in the browser.
+[[transmission]]
+name = "Local"
+# This is the full RPC endpoint, not the Transmission web interface URL.
+url = "http://127.0.0.1:9091/transmission/rpc"
+# Optional daemon HTTP Basic authentication: set both values or neither.
+# username = "transmission"
+# password = "replace-with-your-transmission-password"
+# Optional directory on the Transmission host. Omit to use its default.
+# download_dir = "/srv/downloads"
+timeout_seconds = 60
+
+# Add more named destinations by repeating the array-of-tables block:
+# [[transmission]]
+# name = "Remote"
+# url = "https://downloads.example.com/transmission/rpc"
+# username = "transmission"
+# password = "replace-with-your-remote-password"
+# download_dir = "/data/torrents"
+# timeout_seconds = 90

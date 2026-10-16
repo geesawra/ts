@@ -1,0 +1,167 @@
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  min-width: 20rem;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.app-subtitle {
+  font-size: 1rem;
+  font-weight: normal;
+}
+
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -5rem;
+  padding: .75rem;
+  background: var(--bs-bg-body);
+  color: var(--bs-fg-body);
+  z-index: 2;
+}
+
+.skip-link:focus {
+  top: .5rem;
+}
+
+.choice-list {
+  height: 12rem;
+  overflow: auto;
+  padding: .5rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: .375rem;
+}
+
+.query-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .5rem;
+}
+
+.query-field {
+  flex: 1 1 16rem;
+}
+
+.selector-choice {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  padding: .25rem;
+}
+
+.selector-choice label {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.capabilities {
+  max-height: 24rem;
+  overflow: auto;
+}
+
+.capability-entry {
+  padding-block: .5rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.capability-entry p,
+.result-meta,
+.action-status {
+  margin-block: .25rem;
+}
+
+.result-table {
+  min-width: 66rem;
+}
+
+.result-table td,
+.result-table th {
+  vertical-align: top;
+}
+
+.result-table th:first-child {
+  min-width: 18rem;
+}
+
+.result-title {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.result-meta,
+.action-status {
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
+.result-actions {
+  min-width: 15rem;
+}
+
+.destination-controls {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin-block-end: .375rem;
+}
+
+.destination-controls select {
+  flex: 1;
+  min-width: 0;
+}
+
+.destination-controls .btn-solid {
+  margin: 0;
+}
+
+.result-actions .btn-outline {
+  margin-block-end: .375rem;
+  margin-inline-end: .375rem;
+}
+
+.sort-button {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  text-align: start;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.status-success {
+  color: light-dark(#176335, #8ce8ae);
+}
+
+.status-error {
+  color: light-dark(#a01825, #ffadb5);
+}
+
+.status-warning {
+  color: light-dark(#795400, #f7d17b);
+}
+
+.magnet-value {
+  width: 100%;
+  margin-block: .375rem;
+}
+
+:focus-visible {
+  outline: 3px solid light-dark(#245fc5, #94baff);
+  outline-offset: 3px;
+}
+
+@media (max-width: 47.99rem) {
+  .container {
+    padding-inline: 1rem;
+  }
+}
