@@ -21,8 +21,9 @@ type seasonMetadata interface {
 }
 
 type seasonSearch struct {
-	series omdb.Series
-	season int
+	series    omdb.Series
+	season    int
+	inventory map[int]seasonInventory
 }
 type aggregationInfo struct {
 	Pages   int  `json:"pages"`
@@ -33,14 +34,16 @@ type seasonCandidate struct {
 	Parsed *releaseParts `json:"parsed"`
 }
 type seasonGroup struct {
-	Key              string            `json:"key"`
-	Show             string            `json:"show"`
-	Season           int               `json:"season"`
-	Candidates       []seasonCandidate `json:"candidates"`
-	Expected         []omdb.Episode    `json:"expected"`
-	Missing          []int             `json:"missing"`
-	CoverageComplete bool              `json:"coverage_complete"`
-	MetadataError    string            `json:"metadata_error"`
+	Key                   string            `json:"key"`
+	Show                  string            `json:"show"`
+	Season                int               `json:"season"`
+	Candidates            []seasonCandidate `json:"candidates"`
+	Expected              []omdb.Episode    `json:"expected"`
+	Missing               []int             `json:"missing"`
+	CoverageComplete      bool              `json:"coverage_complete"`
+	MetadataError         string            `json:"metadata_error"`
+	PreferredReleaseGroup string            `json:"preferred_release_group"`
+	RecommendedIDs        []string          `json:"recommended_ids"`
 }
 
 var imdbSeriesID = regexp.MustCompile(`^tt[0-9]{7,10}$`)
@@ -109,8 +112,8 @@ func (s *Server) prepareSeasonSearch(w http.ResponseWriter, r *http.Request, par
 	return &seasonSearch{series: series, season: selected}, true
 }
 
-// Fetch bounded pages per tracker, deduplicating stable upstream IDs. A tracker
-// that repeats a full page or fails cannot be reported as fully searched.
+// Follow actual feed offsets/counts rather than assuming the requested limit is
+// honored. Without a total, only an empty page establishes exhaustion.
 func (s *Server) aggregateSeasons(ctx context.Context, indexers []string, params url.Values) (jackett.SearchResponse, aggregationInfo, error) {
 	response := jackett.SearchResponse{Results: []jackett.Result{}, Errors: []string{}}
 	info := aggregationInfo{}
@@ -135,13 +138,9 @@ func (s *Server) aggregateSeasons(ctx context.Context, indexers []string, params
 			continue
 		}
 		visited[indexer] = true
-		for page := range 10 {
-			if info.Pages >= 50 || len(response.Results) >= 10000 {
-				info.Partial = true
-				response.Errors = append(response.Errors, "Season aggregation limit reached; tracker coverage is partial")
-				return response, info, nil
-			}
-			query.Set("offset", strconv.Itoa(page*100))
+		offset := 0
+		for {
+			query.Set("offset", strconv.Itoa(offset))
 			result, err := s.jackett.Search(ctx, []string{indexer}, query)
 			info.Pages++
 			if err != nil {
@@ -160,7 +159,17 @@ func (s *Server) aggregateSeasons(ctx context.Context, indexers []string, params
 					added++
 				}
 			}
-			if len(result.Results) < 100 {
+			pagination := result.Pagination[indexer]
+			if pagination.Offset != nil && *pagination.Offset != offset {
+				info.Partial = true
+				response.Errors = append(response.Errors, indexer+": response offset does not match the requested page; tracker coverage is partial")
+				break
+			}
+			if pagination.Count == 0 {
+				if pagination.Total != nil && offset < *pagination.Total {
+					info.Partial = true
+					response.Errors = append(response.Errors, indexer+": empty page before the advertised total; tracker coverage is partial")
+				}
 				break
 			}
 			if added == 0 {
@@ -168,9 +177,19 @@ func (s *Server) aggregateSeasons(ctx context.Context, indexers []string, params
 				response.Errors = append(response.Errors, indexer+": repeated result page; tracker coverage is partial")
 				break
 			}
-			if page == 9 {
-				info.Partial = true
-				response.Errors = append(response.Errors, indexer+": page limit reached; tracker coverage is partial")
+			offset += pagination.Count
+			if pagination.Total != nil {
+				if offset > *pagination.Total {
+					info.Partial = true
+					response.Errors = append(response.Errors, indexer+": inconsistent pagination total; tracker coverage is partial")
+					break
+				}
+				if offset == *pagination.Total {
+					break
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return response, info, err
 			}
 		}
 	}
@@ -181,11 +200,8 @@ func (s *Server) aggregateSeasons(ctx context.Context, indexers []string, params
 }
 
 func (s *Server) buildSeasonGroups(ctx context.Context, request *seasonSearch, rows []publicResult) []seasonGroup {
-	first, last := 1, request.series.TotalSeasons
-	if request.season > 0 {
-		first = request.season
-		last = first
-	}
+	s.loadSeasonInventory(ctx, request)
+	first, last := request.seasonRange()
 	groups := make([]seasonGroup, 0, last-first+1)
 	titleKey := normalizeShow(request.series.Title)
 	year := strings.FieldsFunc(request.series.Year, func(r rune) bool { return r < '0' || r > '9' })
@@ -194,6 +210,10 @@ func (s *Server) buildSeasonGroups(ctx context.Context, request *seasonSearch, r
 		yearKey = titleKey + " " + year[0]
 	}
 	candidates := make(map[int][]seasonCandidate)
+	releases := make(map[string]*publicResult, len(rows))
+	for i := range rows {
+		releases[rows[i].ID] = &rows[i]
+	}
 	coverage := make(map[int]map[int]bool)
 	for _, row := range rows {
 		parsed := parseRelease(row.Title)
@@ -219,9 +239,10 @@ func (s *Server) buildSeasonGroups(ctx context.Context, request *seasonSearch, r
 		if group.Candidates == nil {
 			group.Candidates = []seasonCandidate{}
 		}
-		expected, err := s.metadata.Season(ctx, request.series.ID, season)
-		if err != nil {
-			group.MetadataError = err.Error()
+		inventory := request.inventory[season]
+		expected := inventory.episodes
+		if inventory.err != nil {
+			group.MetadataError = inventory.err.Error()
 		} else if len(expected) == 0 {
 			group.MetadataError = "OMDb returned no episode inventory"
 		} else {
@@ -234,6 +255,7 @@ func (s *Server) buildSeasonGroups(ctx context.Context, request *seasonSearch, r
 			sort.Ints(group.Missing)
 			group.CoverageComplete = len(group.Missing) == 0
 		}
+		recommendSeasonReleases(&group, releases)
 		groups = append(groups, group)
 	}
 	return groups

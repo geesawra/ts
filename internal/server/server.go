@@ -182,11 +182,6 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if cats := params["cat"]; len(cats) > 1 {
 		params.Set("cat", strings.Join(cats, ","))
 	}
-	if r.URL.Query().Get("complete_seasons") != "" {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-		defer cancel()
-		r = r.WithContext(ctx)
-	}
 	seasonRequest, ok := s.prepareSeasonSearch(w, r, params)
 	if !ok {
 		return
@@ -195,7 +190,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	var aggregation aggregationInfo
 	var err error
 	if seasonRequest != nil {
-		result, aggregation, err = s.aggregateSeasons(r.Context(), r.URL.Query()["indexer"], params)
+		result, aggregation, err = s.discoverSeasons(r.Context(), r.URL.Query()["indexer"], params, seasonRequest)
 	} else {
 		result, err = s.jackett.Search(r.Context(), r.URL.Query()["indexer"], params)
 	}
@@ -211,7 +206,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 			delete(s.results, id)
 		}
 	}
-	if len(s.results)+len(result.Results) > 20000 {
+	if seasonRequest == nil && len(s.results)+len(result.Results) > 20000 {
 		s.mu.Unlock()
 		fail(w, 503, "Search result cache full; retry after older searches expire")
 		return

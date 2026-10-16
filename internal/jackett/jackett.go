@@ -60,9 +60,18 @@ type Result struct {
 	UploadVolumeFactor   float64  `json:"upload_volume_factor"`
 }
 
+// SearchPage retains pagination metadata that the upstream SDK drops. Count is
+// the raw feed item count, before any SDK deduplication.
+type SearchPage struct {
+	Count  int
+	Offset *int
+	Total  *int
+}
+
 type SearchResponse struct {
-	Results []Result `json:"results"`
-	Errors  []string `json:"errors"`
+	Results    []Result              `json:"results"`
+	Errors     []string              `json:"errors"`
+	Pagination map[string]SearchPage `json:"-"`
 }
 
 type Client struct {
@@ -200,6 +209,7 @@ func (c *Client) Search(ctx context.Context, indexers []string, params url.Value
 	}
 	results := make([][]Result, len(ids))
 	errs := make([]error, len(ids))
+	pages := make([]SearchPage, len(ids))
 	parallel(len(ids), func(i int) {
 		data := &searchData{params: query}
 		requestContext := context.WithValue(ctx, searchKey{}, data)
@@ -214,6 +224,7 @@ func (c *Client) Search(ctx context.Context, indexers []string, params url.Value
 		for n, item := range items {
 			results[i] = append(results[i], adaptResult(item, ids[i], data, n))
 		}
+		pages[i] = data.page
 	})
 	for i, items := range results {
 		if errs[i] != nil {
@@ -221,6 +232,10 @@ func (c *Client) Search(ctx context.Context, indexers []string, params url.Value
 			continue
 		}
 		response.Results = append(response.Results, items...)
+		if response.Pagination == nil {
+			response.Pagination = make(map[string]SearchPage, len(ids))
+		}
+		response.Pagination[ids[i]] = pages[i]
 	}
 	if ctx.Err() != nil {
 		return response, ctx.Err()
@@ -252,6 +267,7 @@ type searchData struct {
 	params url.Values
 	title  string
 	items  []itemMetadata
+	page   SearchPage
 }
 
 // libraryTransport bridges library URL-construction gaps: reverse-proxy base
@@ -297,15 +313,27 @@ func (t *libraryTransport) RoundTrip(request *http.Request) (*http.Response, err
 		return nil, err
 	}
 	var supplement struct {
-		XMLName xml.Name `xml:"rss"`
+		XMLName xml.Name
 		Channel struct {
-			Title string         `xml:"title"`
-			Items []itemMetadata `xml:"item"`
+			Title    string         `xml:"title"`
+			Items    []itemMetadata `xml:"item"`
+			Response *struct {
+				Offset *int `xml:"offset,attr"`
+				Total  *int `xml:"total,attr"`
+			} `xml:"response"`
 		} `xml:"channel"`
 	}
-	if xml.Unmarshal(body, &supplement) == nil {
-		data.title = supplement.Channel.Title
-		data.items = supplement.Channel.Items
+	if err := xml.Unmarshal(body, &supplement); err != nil {
+		return nil, errors.New("invalid Jackett feed or pagination metadata")
+	}
+	data.title = supplement.Channel.Title
+	data.items = supplement.Channel.Items
+	data.page.Count = len(supplement.Channel.Items)
+	if page := supplement.Channel.Response; page != nil {
+		if (page.Offset != nil && *page.Offset < 0) || (page.Total != nil && *page.Total < 0) {
+			return nil, errors.New("invalid Jackett pagination metadata")
+		}
+		data.page.Offset, data.page.Total = page.Offset, page.Total
 	}
 	response.Body = io.NopCloser(bytes.NewReader(body))
 	return response, nil

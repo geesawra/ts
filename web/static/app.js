@@ -434,6 +434,62 @@
     return (Number(b.result.seeders) || 0) - (Number(a.result.seeders) || 0)
       || String(a.result.title || '').localeCompare(String(b.result.title || ''), undefined, { numeric: true, sensitivity: 'base' });
   }
+  function seasonDownloadable(candidate) {
+    return candidate.result.has_magnet || candidate.result.has_torrent;
+  }
+
+  function seasonQuality(candidate) {
+    const parsed = candidate.parsed;
+    const resolution = (parsed.resolution || '').toLowerCase().replace(/^4k$/, '2160p');
+    const source = (parsed.source || '').toUpperCase().replace(/[ ._-]/g, '')
+      .replace(/^WEBDL$/, 'WEB-DL').replace(/^WEBRIP$/, 'WEBRip')
+      .replace(/^BLURAY$/, 'BluRay').replace(/^BDRIP$/, 'BDRip').replace(/^DVDRIP$/, 'DVDRip');
+    const codec = (parsed.codec || '').toUpperCase().replace(/[ .]/g, '')
+      .replace(/^(H265|HEVC)$/, 'HEVC').replace(/^(H264|AVC)$/, 'H.264').replace(/^X26([45])$/, 'x26$1');
+    const releaseGroup = parsed.releaseGroup || '';
+    return {
+      key: JSON.stringify([resolution, source, codec, releaseGroup.toLowerCase()]),
+      releaseGroup,
+      label: [resolution || 'Unknown resolution', source || 'Unknown source', codec || 'Unknown codec', releaseGroup || 'Unknown release group'].join(' · '),
+    };
+  }
+
+  function seasonEpisodeSelection(candidates, episodeNumbers, initial = {}) {
+    const selection = { ...initial };
+    const relevant = new Set(episodeNumbers);
+    const covered = new Set(Object.keys(selection).filter((number) => selection[number]).map(Number));
+    const choices = candidates.filter(seasonDownloadable).sort(compareSeasonCandidates);
+    for (const allowOverlap of [false, true]) {
+      for (const candidate of choices) {
+        const episodes = candidate.parsed.episodes.filter((number) => relevant.has(number));
+        if (!episodes.some((number) => !covered.has(number))) continue;
+        if (!allowOverlap && episodes.some((number) => covered.has(number))) continue;
+        for (const number of episodes) {
+          if (!covered.has(number)) selection[number] = candidate.result.id;
+          covered.add(number);
+        }
+      }
+    }
+    return selection;
+  }
+
+  function seasonBundles(candidates, episodeNumbers) {
+    const bundles = new Map();
+    for (const candidate of candidates) {
+      if (candidate.parsed.pack || !seasonDownloadable(candidate)) continue;
+      const quality = seasonQuality(candidate);
+      if (!bundles.has(quality.key)) bundles.set(quality.key, { ...quality, candidates: [] });
+      bundles.get(quality.key).candidates.push(candidate);
+    }
+    for (const bundle of bundles.values()) {
+      bundle.candidates.sort(compareSeasonCandidates);
+      bundle.episodes = seasonEpisodeSelection(bundle.candidates, episodeNumbers);
+      bundle.covered = Object.keys(bundle.episodes).length;
+      bundle.releaseCount = new Set(Object.values(bundle.episodes)).size;
+    }
+    return Array.from(bundles.values()).sort((a, b) => b.covered - a.covered
+      || compareSeasonCandidates(a.candidates[0], b.candidates[0]) || a.key.localeCompare(b.key));
+  }
 
   function seasonPresentationGroups() {
     if (!state.omdbEnabled || state.lastSearch?.get('complete_seasons') !== '1') return [];
@@ -452,7 +508,9 @@
       }
       packs.sort(compareSeasonCandidates);
       for (const choices of episodes.values()) choices.sort(compareSeasonCandidates);
-      return { ...season, candidates, packs, episodes, expected: season.expected || [], missing: season.missing || [] };
+      const expected = season.expected || [];
+      const targetEpisodes = expected.length ? expected.map((episode) => episode.number) : Array.from(episodes.keys());
+      return { ...season, candidates, packs, episodes, targetEpisodes, bundles: seasonBundles(candidates, targetEpisodes), expected, missing: season.missing || [] };
     });
   }
 
@@ -499,41 +557,33 @@
   }
 
   function seasonGroupNode(group, groupIndex) {
-    const downloadable = (candidate) => candidate.result.has_magnet || candidate.result.has_torrent;
+    const downloadable = seasonDownloadable;
     let selection = state.seasonChoices.get(group.key);
     const episodeNumbers = Array.from(new Set([...group.episodes.keys(), ...group.expected.map((episode) => episode.number)])).sort((a, b) => a - b);
-    const fillDefaults = () => {
-      const chosen = new Map();
-      for (const [episode, id] of Object.entries(selection.episodes)) {
-        const candidate = group.episodes.get(Number(episode))?.find((item) => item.result.id === id && downloadable(item));
-        if (candidate) chosen.set(id, candidate);
-      }
-      const covered = new Set(Array.from(chosen.values()).flatMap((candidate) => candidate.parsed.episodes));
-      for (const episode of episodeNumbers) {
-        if (Object.prototype.hasOwnProperty.call(selection.episodes, episode)) continue;
-        const choices = (group.episodes.get(episode) || []).filter(downloadable);
-        const existing = choices.find((candidate) => chosen.has(candidate.result.id));
-        const preferred = existing || choices.find((candidate) => candidate.parsed.episodes.every((number) => !covered.has(number))) || choices[0];
-        if (!preferred) continue;
-        chosen.set(preferred.result.id, preferred);
-        for (const number of preferred.parsed.episodes) {
-          covered.add(number);
-          if (!Object.prototype.hasOwnProperty.call(selection.episodes, number)) selection.episodes[number] = preferred.result.id;
-        }
-      }
-    };
+    const candidatesByID = new Map(group.candidates.filter((candidate) => !candidate.parsed.pack && downloadable(candidate))
+      .map((candidate) => [candidate.result.id, candidate]));
+    const preferredBundle = group.bundles.find((bundle) => bundle.releaseGroup.toLowerCase() === (group.preferred_release_group || '').toLowerCase()) || group.bundles[0];
+    const recommendedEpisodes = seasonEpisodeSelection(
+      (group.recommended_ids || []).map((id) => candidatesByID.get(id)).filter(Boolean),
+      group.targetEpisodes, preferredBundle?.episodes);
     if (!selection) {
       const pack = group.packs.find(downloadable);
-      selection = { mode: pack ? `pack:${pack.result.id}` : 'episodes', episodes: {} };
-      fillDefaults();
+      const exactBundle = group.bundles.find((bundle) => Object.keys(bundle.episodes).length === Object.keys(recommendedEpisodes).length
+        && Object.entries(recommendedEpisodes).every(([episode, id]) => bundle.episodes[episode] === id));
+      selection = {
+        mode: Object.keys(recommendedEpisodes).length || !pack ? 'episodes' : `pack:${pack.result.id}`,
+        episodes: recommendedEpisodes, bundle: exactBundle?.key || 'recommended',
+        inspectOpen: false, openEpisodes: new Set(),
+      };
+      state.seasonChoices.set(group.key, selection);
     }
-    state.seasonChoices.set(group.key, selection);
     const details = element('details', undefined, 'season-group');
     details.dataset.seasonKey = group.key;
     const coverage = group.metadata_error ? 'Metadata unavailable — completeness unknown' : group.coverage_complete ? 'OMDb inventory covered' : 'Incomplete OMDb coverage';
-    details.append(element('summary', `${group.show} · Season ${group.season} · ${coverage} · ${group.candidates.length} releases · Inspect components`));
+    details.append(element('summary', `${group.show} · Season ${group.season} · ${coverage} · ${group.bundles.length} quality bundle${group.bundles.length === 1 ? '' : 's'} · ${group.candidates.length} releases`));
     const content = element('div', undefined, 'season-group-content');
     content.append(element('p', 'Coverage checks only the OMDb episode inventory; this does not mean the season has finished airing. Pack titles alone do not verify their contents. All original releases and download actions remain below.', 'season-group-note'));
+    if (group.preferred_release_group) content.append(element('p', `Preferred release group: ${group.preferred_release_group} — broadest distinct episode coverage. The recommended selection starts with its best-covered quality bundle, then fills gaps with other recommended releases.`, 'season-group-note'));
     if (group.metadata_error) content.append(element('p', group.metadata_error, 'season-group-note status-error'));
     content.append(element('p', group.missing.length ? `Missing downloadable episodes: ${group.missing.map((number) => seasonEpisodeLabel(group.season, number)).join(', ')}` : group.expected.length ? 'No missing episodes in the OMDb inventory.' : 'No OMDb episode inventory available; completeness is unknown.', `season-group-note${group.missing.length || !group.expected.length ? ' status-warning' : ''}`));
     const inventory = element('details');
@@ -544,7 +594,7 @@
     content.append(inventory);
 
     const packField = element('fieldset', undefined, 'season-choice-list');
-    packField.append(element('legend', 'Choose a season pack or individual episodes'));
+    packField.append(element('legend', 'Choose a season pack or episode bundles'));
     for (const candidate of group.packs) {
       const id = candidate.result.id;
       const choice = seasonChoice(`season-mode-${groupIndex}`, `pack:${id}`, candidate.result.title || '(Untitled season pack)',
@@ -553,50 +603,107 @@
       choice.input.dataset.mode = `pack:${id}`;
       packField.append(choice.wrapper);
     }
-    const episodeMode = seasonChoice(`season-mode-${groupIndex}`, 'episodes', 'Individual episode releases',
-      'Review one choice per episode; multi-episode releases are added only once.', selection.mode === 'episodes', false,
-      () => { selection.mode = 'episodes'; fillDefaults(); refresh(); });
+    const episodeMode = seasonChoice(`season-mode-${groupIndex}`, 'episodes', 'Episode bundles',
+      'Choose a quality/release-group bundle below, or inspect and override individual torrents.', selection.mode === 'episodes', !group.bundles.length,
+      () => { selection.mode = 'episodes'; refresh(); });
     episodeMode.input.dataset.mode = 'episodes';
     packField.append(episodeMode.wrapper);
     content.append(packField);
 
-    const episodeList = element('div', undefined, 'season-episode-list');
-    for (const episode of episodeNumbers) {
-      const field = element('fieldset', undefined, 'season-episode');
-      field.append(element('legend', seasonEpisodeLabel(group.season, episode)));
-      const candidates = group.episodes.get(episode) || [];
-      if (!candidates.length) field.append(element('p', 'No individual downloadable candidate identified.', 'season-group-note status-warning'));
-      for (const candidate of candidates) {
-        const id = candidate.result.id;
-        const choice = seasonChoice(`season-episode-${groupIndex}-${episode}`, id, candidate.result.title || '(Untitled release)',
-          seasonCandidateMeta(candidate), selection.mode === 'episodes' && selection.episodes[episode] === id, !downloadable(candidate),
-          () => {
-            selection.mode = 'episodes';
-            fillDefaults();
-            for (const number of candidate.parsed.episodes) selection.episodes[number] = id;
-            refresh();
-          });
-        choice.input.dataset.episode = String(episode);
-        field.append(choice.wrapper);
-      }
-      if (candidates.length) {
-        const skip = seasonChoice(`season-episode-${groupIndex}-${episode}`, '', 'Skip this episode', 'Do not select a release for this episode.',
-          selection.mode === 'episodes' && !selection.episodes[episode], false,
-          () => {
-            selection.mode = 'episodes';
-            const skipped = new Set(selectedCandidates().filter((candidate) => candidate.parsed.episodes.includes(episode)).map((candidate) => candidate.result.id));
-            for (const number of Object.keys(selection.episodes)) {
-              if (skipped.has(selection.episodes[number])) selection.episodes[number] = '';
-            }
-            selection.episodes[episode] = '';
-            refresh();
-          });
-        skip.input.dataset.episode = String(episode);
-        field.append(skip.wrapper);
-      }
-      episodeList.append(field);
+    const bundleField = element('fieldset', undefined, 'season-choice-list season-bundles');
+    bundleField.append(element('legend', 'Resolution, quality, and release group'));
+    const recommendedChoice = seasonChoice(`season-bundle-${groupIndex}`, 'recommended', 'Recommended selection (gap fills may mix qualities or groups)',
+      `${Object.keys(recommendedEpisodes).length}/${group.targetEpisodes.length} episodes · Starts with ${preferredBundle?.label || 'available releases'}. Inspect the selection below.`,
+      selection.bundle === 'recommended', !Object.keys(recommendedEpisodes).length,
+      () => { selection.mode = 'episodes'; selection.bundle = 'recommended'; selection.episodes = { ...recommendedEpisodes }; refresh(); });
+    recommendedChoice.input.dataset.bundle = 'recommended';
+    bundleField.append(recommendedChoice.wrapper);
+    for (const bundle of group.bundles) {
+      const gaps = group.targetEpisodes.length - bundle.covered;
+      const choice = seasonChoice(`season-bundle-${groupIndex}`, bundle.key, bundle.label,
+        `${bundle.covered}/${group.targetEpisodes.length} episodes · ${gaps ? `${gaps} gap${gaps === 1 ? '' : 's'}` : 'Full episode coverage'} · ${bundle.releaseCount} torrent${bundle.releaseCount === 1 ? '' : 's'} · ${bundle.candidates.length} alternative${bundle.candidates.length === 1 ? '' : 's'} · No automatic gap fills`,
+        selection.bundle === bundle.key, !bundle.releaseCount,
+        () => { selection.mode = 'episodes'; selection.bundle = bundle.key; selection.episodes = { ...bundle.episodes }; refresh(); });
+      choice.input.dataset.bundle = bundle.key;
+      bundleField.append(choice.wrapper);
     }
-    content.append(episodeList);
+    if (!group.bundles.length) bundleField.append(element('p', 'No downloadable episode bundles identified. Season packs, if available, remain selectable above.', 'season-group-note status-warning'));
+    const selectedSummary = element('p', '', 'season-selection-summary');
+    const selectedQualities = element('ul', undefined, 'season-selection-qualities');
+    const inspector = element('details', undefined, 'season-inspector');
+    inspector.append(element('summary', `Inspect or override individual torrents (${episodeNumbers.length} episodes)`));
+    const episodeList = element('div', undefined, 'season-episode-list');
+    inspector.append(episodeList);
+    const episodeSummaries = new Map();
+    let inspectorBuilt = false;
+    const buildInspector = () => {
+      if (inspectorBuilt) return;
+      inspectorBuilt = true;
+      for (const episode of episodeNumbers) {
+        const episodeDetails = element('details', undefined, 'season-episode');
+        const summary = element('summary');
+        episodeSummaries.set(episode, summary);
+        episodeDetails.append(summary);
+        const candidates = group.episodes.get(episode) || [];
+        let choicesBuilt = false;
+        const buildChoices = () => {
+          if (choicesBuilt) return;
+          choicesBuilt = true;
+          const field = element('fieldset', undefined, 'season-choice-list');
+          field.append(element('legend', seasonEpisodeLabel(group.season, episode)));
+          if (!candidates.some(downloadable)) field.append(element('p', 'No individual downloadable candidate identified.', 'season-group-note status-warning'));
+          for (const candidate of candidates) {
+            const id = candidate.result.id;
+            const choice = seasonChoice(`season-episode-${groupIndex}-${episode}`, id, candidate.result.title || '(Untitled release)',
+              seasonCandidateMeta(candidate), selection.mode === 'episodes' && selection.episodes[episode] === id, !downloadable(candidate),
+              () => {
+                selection.mode = 'episodes';
+                selection.bundle = 'custom';
+                for (const number of candidate.parsed.episodes) selection.episodes[number] = id;
+                refresh();
+              });
+            choice.input.dataset.episode = String(episode);
+            field.append(choice.wrapper);
+          }
+          if (candidates.length) {
+            const skip = seasonChoice(`season-episode-${groupIndex}-${episode}`, '', 'Skip this episode',
+              'A multi-episode torrent containing this episode is skipped for all its episodes.',
+              selection.mode === 'episodes' && !selection.episodes[episode], false,
+              () => {
+                selection.mode = 'episodes';
+                selection.bundle = 'custom';
+                const skipped = new Set(selectedCandidates().filter((candidate) => candidate.parsed.episodes.includes(episode)).map((candidate) => candidate.result.id));
+                for (const number of Object.keys(selection.episodes)) {
+                  if (skipped.has(selection.episodes[number])) selection.episodes[number] = '';
+                }
+                selection.episodes[episode] = '';
+                refresh();
+              });
+            skip.input.dataset.episode = String(episode);
+            field.append(skip.wrapper);
+          }
+          episodeDetails.append(field);
+        };
+        episodeDetails.open = selection.openEpisodes.has(episode);
+        if (episodeDetails.open) buildChoices();
+        episodeDetails.addEventListener('toggle', () => {
+          if (episodeDetails.open) {
+            selection.openEpisodes.add(episode);
+            buildChoices();
+          } else selection.openEpisodes.delete(episode);
+          refresh();
+        });
+        episodeList.append(episodeDetails);
+      }
+    };
+    inspector.open = selection.inspectOpen;
+    if (inspector.open) buildInspector();
+    inspector.addEventListener('toggle', () => {
+      selection.inspectOpen = inspector.open;
+      if (inspector.open) buildInspector();
+      refresh();
+    });
+    content.append(bundleField, selectedSummary, selectedQualities, inspector);
 
     const actions = element('div', undefined, 'season-group-actions');
     const destination = element('select', undefined, 'form-control');
@@ -631,14 +738,34 @@
       destination.disabled = record.pending || !state.endpoints.length;
       for (const input of details.querySelectorAll('input[type="radio"]')) {
         input.disabled = record.pending || input.dataset.unavailable === 'true';
-        input.checked = input.dataset.mode !== undefined
-          ? selection.mode === input.dataset.mode
-          : selection.mode === 'episodes' && (selection.episodes[input.dataset.episode] || '') === input.value;
+        input.checked = input.dataset.bundle !== undefined
+          ? selection.mode === 'episodes' && selection.bundle === input.dataset.bundle
+          : input.dataset.mode !== undefined ? selection.mode === input.dataset.mode
+            : selection.mode === 'episodes' && (selection.episodes[input.dataset.episode] || '') === input.value;
       }
       const counts = new Map();
       if (selection.mode === 'episodes') for (const candidate of selected) {
         for (const episode of candidate.parsed.episodes) counts.set(episode, (counts.get(episode) || 0) + 1);
       }
+      for (const [episode, summary] of episodeSummaries) {
+        const candidate = candidatesByID.get(selection.episodes[episode]);
+        summary.textContent = `${seasonEpisodeLabel(group.season, episode)} · ${candidate ? candidate.result.title : 'Not selected'}${selection.mode !== 'episodes' ? ' (episode selection inactive)' : ''}`;
+      }
+      const qualityCounts = new Map();
+      for (const candidate of selected) {
+        const quality = seasonQuality(candidate);
+        const entry = qualityCounts.get(quality.key) || { label: quality.label, count: 0 };
+        entry.count += 1;
+        qualityCounts.set(quality.key, entry);
+      }
+      const bundle = group.bundles.find((item) => item.key === selection.bundle);
+      const label = selection.mode.startsWith('pack:') ? 'Season pack (contents unverified)'
+        : selection.bundle === 'custom' ? 'Custom episode selection'
+          : selection.bundle === 'recommended' ? 'Recommended selection with gap fills' : bundle?.label || 'Episode selection';
+      selectedSummary.textContent = `${label} · ${selected.length} selected torrent${selected.length === 1 ? '' : 's'} · ${sizeText(selected.reduce((total, candidate) => total + (Number(candidate.result.size) || 0), 0))} total reported size`;
+      selectedQualities.replaceChildren();
+      for (const { label: quality, count } of qualityCounts.values()) selectedQualities.append(element('li', `${quality} · ${count} torrent${count === 1 ? '' : 's'}`));
+      selectedQualities.hidden = qualityCounts.size < 2;
       const overlap = Array.from(counts).filter(([, count]) => count > 1).map(([episode]) => episode);
       const unselected = selection.mode === 'episodes' ? group.expected.filter((episode) => !counts.has(episode.number)).map((episode) => episode.number) : [];
       warning.textContent = [

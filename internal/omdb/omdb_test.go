@@ -14,7 +14,7 @@ import (
 )
 
 const seriesJSON = `{"Response":"True","imdbID":"tt1234567","Title":"Example Show","Year":"2020–","Type":"series","totalSeasons":"2"}`
-const searchJSON = `{"Response":"True","Search":[{"imdbID":"tt1234567","Title":"Example Show","Year":"2020–","Type":"series"}]}`
+const searchJSON = `{"Response":"True","totalResults":"1","Search":[{"imdbID":"tt1234567","Title":"Example Show","Year":"2020–","Type":"series"}]}`
 const seasonJSON = `{"Response":"True","Title":"Example Show","Season":"1","totalSeasons":"2","Episodes":[{"Episode":"2","Title":"Second","Released":"N/A","imdbID":"tt1234569"},{"Episode":"1","Title":"First","Released":"2020-01-02","imdbID":"tt1234568"}]}`
 
 func testClient(t *testing.T, handler http.HandlerFunc) *Client {
@@ -181,6 +181,182 @@ func TestRejectMalformedSearchCandidates(t *testing.T) {
 		} else if strings.Contains(err.Error(), "private-") {
 			t.Fatal("upstream error leaked the API key")
 		}
+	}
+}
+
+func searchPage(total, first, count int) string {
+	items := make([]string, 0, count)
+	for i := first; i < first+count; i++ {
+		items = append(items, fmt.Sprintf(`{"imdbID":"tt%07d","Title":"Show %d","Year":"2020","Type":"series"}`, i, i))
+	}
+	return fmt.Sprintf(`{"Response":"True","totalResults":"%d","Search":[%s]}`, total, strings.Join(items, ","))
+}
+
+func TestSearchReturnsLaterPageMatchesAndCachesCompleteResult(t *testing.T) {
+	for _, total := range []int{10, 11, 20, 21, 1000} {
+		t.Run(fmt.Sprint(total), func(t *testing.T) {
+			var calls atomic.Int32
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				page := int(calls.Add(1))
+				if r.URL.Query().Get("page") != fmt.Sprint(page) {
+					t.Error("unexpected search page")
+				}
+				io.WriteString(w, searchPage(total, (page-1)*10+1, min(10, total-(page-1)*10)))
+			})
+			matches, err := client.Search(context.Background(), "Show")
+			if err != nil || len(matches) != total {
+				t.Fatalf("incomplete candidates: got %d, want %d: %v", len(matches), total, err)
+			}
+			for i, match := range matches {
+				if match.ID != fmt.Sprintf("tt%07d", i+1) {
+					t.Fatalf("missing or reordered match %d: %#v", i+1, match)
+				}
+			}
+			matches[total-1].ID = "changed"
+			cached, err := client.Search(context.Background(), "Show")
+			if err != nil || len(cached) != total || cached[total-1].ID != fmt.Sprintf("tt%07d", total) {
+				t.Fatalf("complete cached result was corrupted: %#v, %v", cached, err)
+			}
+			if calls.Load() != int32((total+9)/10) {
+				t.Fatalf("search fetched beyond the final page or missed the cache: %d calls", calls.Load())
+			}
+		})
+	}
+}
+
+func TestSearchDeduplicatesOverlappingPages(t *testing.T) {
+	var calls atomic.Int32
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		page := calls.Add(1)
+		if page == 1 {
+			io.WriteString(w, searchPage(20, 1, 10))
+		} else {
+			io.WriteString(w, searchPage(20, 10, 10))
+		}
+	})
+	matches, err := client.Search(context.Background(), "Show")
+	if err != nil || len(matches) != 19 {
+		t.Fatalf("unexpected deduplicated matches: %#v, %v", matches, err)
+	}
+	for i, match := range matches {
+		if match.ID != fmt.Sprintf("tt%07d", i+1) {
+			t.Fatalf("missing or repeated candidate: %#v", matches)
+		}
+	}
+}
+
+func TestIncompleteSearchIsNotReturnedOrCached(t *testing.T) {
+	tests := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{"repeated page", searchPage(20, 1, 10), searchPage(20, 1, 10)},
+		{"truncated first page", searchPage(20, 1, 9), ""},
+		{"truncated last page", searchPage(20, 1, 10), searchPage(20, 11, 9)},
+		{"empty later page", searchPage(20, 1, 10), searchPage(20, 11, 0)},
+		{"inconsistent count", searchPage(20, 1, 10), searchPage(21, 11, 10)},
+		{"missing count", strings.Replace(searchJSON, `"totalResults":"1",`, "", 1), ""},
+		{"invalid count", strings.Replace(searchJSON, `"totalResults":"1"`, `"totalResults":"private-omdb-key"`, 1), ""},
+		{"zero count", searchPage(0, 1, 1), ""},
+		{"overflow count", strings.Replace(searchJSON, `"totalResults":"1"`, `"totalResults":"9999999999999999999999"`, 1), ""},
+		{"too broad", searchPage(1001, 1, 10), ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			var repaired atomic.Bool
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if repaired.Load() {
+					io.WriteString(w, searchJSON)
+				} else if r.URL.Query().Get("page") == "1" {
+					io.WriteString(w, test.first)
+				} else {
+					io.WriteString(w, test.second)
+				}
+			})
+			matches, err := client.Search(context.Background(), "Show")
+			if err == nil || matches != nil {
+				t.Fatalf("incomplete search returned success or partial matches: %#v, %v", matches, err)
+			}
+			if strings.Contains(err.Error(), "private-") || strings.Contains(err.Error(), client.endpoint) {
+				t.Fatalf("unsafe search error: %v", err)
+			}
+			if test.name == "too broad" && (!strings.Contains(err.Error(), "narrow") || calls.Load() != 1) {
+				t.Fatalf("unreachable results were not rejected immediately with narrowing guidance: %v, %d calls", err, calls.Load())
+			}
+			before := calls.Load()
+			repaired.Store(true)
+			matches, err = client.Search(context.Background(), "Show")
+			if err != nil || len(matches) != 1 || matches[0].ID != "tt1234567" || calls.Load() != before+1 {
+				t.Fatalf("failed search was cached instead of retried: %#v, %v", matches, err)
+			}
+		})
+	}
+}
+
+func TestLaterSearchPageErrorsAreSafeAndNotCached(t *testing.T) {
+	for _, failure := range []string{"authentication response", "HTTP authentication", "transport"} {
+		t.Run(failure, func(t *testing.T) {
+			client := New("private-omdb-key", time.Second)
+			var calls int
+			repaired := false
+			client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				body := searchPage(11, 1, 10)
+				status := http.StatusOK
+				if r.URL.Query().Get("page") == "2" {
+					body = searchPage(11, 11, 1)
+					if !repaired {
+						switch failure {
+						case "authentication response":
+							body = `{"Response":"False","Error":"private-omdb-key invalid"}`
+						case "HTTP authentication":
+							status = http.StatusUnauthorized
+							body = "private-omdb-key invalid"
+						case "transport":
+							return nil, fmt.Errorf("transport failed for %s", r.URL)
+						}
+					}
+				}
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})
+			matches, err := client.Search(context.Background(), "Show")
+			if err == nil || matches != nil {
+				t.Fatalf("later page failure returned partial success: %#v, %v", matches, err)
+			}
+			if strings.Contains(err.Error(), "private-") || strings.Contains(err.Error(), "omdbapi.com") {
+				t.Fatalf("unsafe later page error: %v", err)
+			}
+			repaired = true
+			matches, err = client.Search(context.Background(), "Show")
+			if err != nil || len(matches) != 11 || matches[10].ID != "tt0000011" || calls != 4 {
+				t.Fatalf("later page failure was cached or last match lost: %#v, %v (%d calls)", matches, err, calls)
+			}
+		})
+	}
+}
+
+func TestSearchTimeoutBoundsAllPages(t *testing.T) {
+	client := New("private-omdb-key", 200*time.Millisecond)
+	client.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		timer := time.NewTimer(120 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		case <-timer.C:
+		}
+		body := searchPage(11, 1, 10)
+		if r.URL.Query().Get("page") == "2" {
+			body = searchPage(11, 11, 1)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+	})
+	matches, err := client.Search(context.Background(), "Show")
+	if !errors.Is(err, context.DeadlineExceeded) || matches != nil {
+		t.Fatalf("multi-page search exceeded its whole-operation timeout: %#v, %v", matches, err)
 	}
 }
 

@@ -238,6 +238,37 @@ body {
   gap: .5rem;
 }
 
+.season-choice-list,
+.season-choice label > span {
+  min-width: 0;
+}
+
+.season-selection-summary {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.season-selection-qualities {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
+.season-inspector > summary {
+  padding-block: .5rem;
+}
+
+.season-episode > summary {
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+}
+
+.season-episode > .season-choice-list {
+  margin-block-start: .75rem;
+}
+
 .season-choice,
 .season-episode {
   min-width: 0;

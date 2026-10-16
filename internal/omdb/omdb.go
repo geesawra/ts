@@ -70,8 +70,8 @@ func New(apiKey string, timeout time.Duration) *Client {
 	}
 }
 
-// Search returns OMDb's first page of series candidates. A candidate's season
-// count may be unavailable until Series resolves its full metadata.
+// Search returns all accessible OMDb series candidates, or an error if the
+// result cannot be retrieved completely. Season counts may require Series.
 func (c *Client) Search(ctx context.Context, q string) ([]Series, error) {
 	if err := c.ready(ctx); err != nil {
 		return nil, err
@@ -84,25 +84,58 @@ func (c *Client) Search(ctx context.Context, q string) ([]Series, error) {
 	if cached, ok := c.cached(key); ok {
 		return cached.matches, nil
 	}
-	var response struct {
-		Response string       `json:"Response"`
-		Search   []wireSeries `json:"Search"`
-	}
-	if err := c.request(ctx, url.Values{"s": {q}, "type": {"series"}}, &response); err != nil {
-		return nil, err
-	}
-	if response.Response != "True" || len(response.Search) == 0 {
-		return nil, errors.New("OMDb did not return series candidates")
-	}
-	matches := make([]Series, 0, len(response.Search))
-	seen := make(map[string]bool, len(response.Search))
-	for _, item := range response.Search {
-		series, err := item.resolve(false)
-		if err != nil || seen[series.ID] {
-			return nil, errors.New("OMDb returned invalid series candidates")
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	var matches []Series
+	var seen map[string]bool
+	total := 0
+	for page := 1; ; page++ {
+		var response struct {
+			Response     string       `json:"Response"`
+			Search       []wireSeries `json:"Search"`
+			TotalResults string       `json:"totalResults"`
 		}
-		seen[series.ID] = true
-		matches = append(matches, series)
+		if err := c.request(ctx, url.Values{"s": {q}, "type": {"series"}, "page": {strconv.Itoa(page)}}, &response); err != nil {
+			return nil, err
+		}
+		if response.Response != "True" {
+			return nil, errors.New("OMDb did not return series candidates")
+		}
+		reported, err := positiveNumber(response.TotalResults)
+		if err != nil {
+			return nil, errors.New("OMDb returned an invalid search result count")
+		}
+		if reported > 1000 {
+			return nil, errors.New("OMDb search exceeds 1000 accessible results; narrow the title query")
+		}
+		if page == 1 {
+			total = reported
+			matches = make([]Series, 0, total)
+			seen = make(map[string]bool, total)
+		} else if reported != total {
+			return nil, errors.New("OMDb returned inconsistent search result counts")
+		}
+		expected := min(10, total-(page-1)*10)
+		if len(response.Search) != expected {
+			return nil, errors.New("OMDb returned an incomplete search page")
+		}
+		before := len(matches)
+		for _, item := range response.Search {
+			series, err := item.resolve(false)
+			if err != nil {
+				return nil, errors.New("OMDb returned invalid series candidates")
+			}
+			if !seen[series.ID] {
+				seen[series.ID] = true
+				matches = append(matches, series)
+			}
+		}
+		if len(matches) == before {
+			return nil, errors.New("OMDb returned a repeated search page")
+		}
+		if page*10 >= total {
+			break
+		}
 	}
 	c.store(key, cacheEntry{matches: matches})
 	return matches, nil

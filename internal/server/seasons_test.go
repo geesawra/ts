@@ -80,6 +80,7 @@ func TestSeasonCoverageRequiresInventoryAndDownloadableEpisodes(t *testing.T) {
 		t.Fatalf("multi-episode coverage lost: %#v", groups[1])
 	}
 	s.metadata = fixtureMetadata{fail: true}
+	request.inventory = nil
 	groups = s.buildSeasonGroups(context.Background(), request, rows)
 	if groups[1].CoverageComplete || groups[1].MetadataError == "" {
 		t.Fatalf("metadata failure claimed complete: %#v", groups[1])
@@ -102,7 +103,7 @@ func TestAggregationFetchesNextPageAndStopsRepeatedPages(t *testing.T) {
 					for n := range 100 {
 						fmt.Fprintf(w, "<item><title>Show.Name.S01E01-GRP</title><guid>item%d</guid></item>", n)
 					}
-				} else {
+				} else if q.Get("offset") == "100" {
 					io.WriteString(w, "<item><title>Show.Name.S01E02-GRP</title><guid>next</guid></item>")
 				}
 				io.WriteString(w, "</channel></rss>")
@@ -113,7 +114,11 @@ func TestAggregationFetchesNextPageAndStopsRepeatedPages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(offsets, []string{"0", "100"}) {
+			wantOffsets := []string{"0", "100", "101"}
+			if repeat {
+				wantOffsets = []string{"0", "100"}
+			}
+			if !reflect.DeepEqual(offsets, wantOffsets) {
 				t.Fatalf("incorrect page traversal: %v", offsets)
 			}
 			if repeat {
@@ -132,11 +137,8 @@ func TestSeasonSearchOptionalAndDownloadTokens(t *testing.T) {
 		if r.URL.Query().Get("complete_seasons") != "" || r.URL.Query().Get("series_id") != "" {
 			t.Error("application options leaked to tracker")
 		}
-		if r.URL.Query().Get("q") != "Show Name" {
-			t.Error("series title was not resolved")
-		}
 		w.Header().Set("Content-Type", "application/xml")
-		io.WriteString(w, `<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><item><title>Show.Name.S01E01-E02.1080p-GROUP</title><guid>one</guid><torznab:attr name="infohash" value="0123456789012345678901234567890123456789"/></item></channel></rss>`)
+		io.WriteString(w, `<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel><torznab:response offset="0" total="1"/><item><title>Show.Name.S01E01-E02.1080p-GROUP</title><guid>one</guid><torznab:attr name="infohash" value="0123456789012345678901234567890123456789"/></item></channel></rss>`)
 	}))
 	defer upstream.Close()
 	s := &Server{cfg: testConfig(upstream.URL), jackett: jackett.New(upstream.URL, "private-key", 0), results: map[string]cachedResult{}}
@@ -160,7 +162,7 @@ func TestSeasonSearchOptionalAndDownloadTokens(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Results) != 1 || len(body.Seasons) != 1 || body.Aggregation.Pages != 1 {
+	if len(body.Results) != 1 || len(body.Seasons) != 1 {
 		t.Fatalf("missing season response: %s", response.Body.String())
 	}
 	if !body.Seasons[0].CoverageComplete || len(body.Seasons[0].Missing) != 0 {
