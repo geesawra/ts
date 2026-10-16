@@ -16,7 +16,7 @@
     ['genre', 'Genre'], ['author', 'Author'], ['title', 'Title'],
     ['publisher', 'Publisher'], ['isbn', 'ISBN'], ['maxage', 'Maximum age (days)'],
   ]);
-  const reserved = new Set(['q', 't', 'indexer', 'cat', 'limit', 'offset', 'apikey']);
+  const reserved = new Set(['q', 't', 'indexer', 'cat', 'limit', 'offset', 'apikey', 'complete_seasons', 'series_id', 'filter', 'min_seeds', 'sort', 'direction']);
   const sortLabels = new Map([
     ['title', 'Title'], ['indexer', 'Tracker'], ['size', 'Size'],
     ['seeders', 'Seeds'], ['peers', 'Peers'], ['published', 'Age'],
@@ -30,8 +30,11 @@
   const compactResults = window.matchMedia('(width < 75rem)');
   const state = {
     indexers: [], endpoints: [], results: [], errors: [], fields: new Map(),
-    fieldValues: new Map(), downloads: new Map(), destinations: new Map(), controller: null, generation: 0,
-    lastSearch: null, sort: 'seeders', direction: 'desc', searched: false,
+    fieldValues: new Map(), downloads: new Map(), destinations: new Map(),
+    seasonChoices: new Map(), seasonDestinations: new Map(), seasonDownloads: new Map(),
+    omdbEnabled: false, seriesID: '', seriesController: null, seriesGeneration: 0,
+    seasons: [], aggregation: null, resultVersion: 0,
+    controller: null, generation: 0, lastSearch: null, sort: 'seeders', direction: 'desc', searched: false,
   };
 
   function element(tag, text, className) {
@@ -75,6 +78,70 @@
 
   function parameters(indexer, mode) {
     return new Set((indexer.modes?.[mode] || []).map((name) => String(name).toLowerCase()));
+  }
+
+  function seasonMode() {
+    return state.omdbEnabled && byId('complete-seasons').checked;
+  }
+
+  function resetSeries() {
+    state.seriesGeneration += 1;
+    state.seriesController?.abort();
+    state.seriesController = null;
+    state.seriesID = '';
+    const placeholder = element('option', 'Find and select a series');
+    placeholder.value = '';
+    byId('series-choice').replaceChildren(placeholder);
+    message('series-status', '');
+  }
+
+  function updateSeasonControls() {
+    const supportedMode = ['search', 'tvsearch'].includes(byId('mode').value);
+    byId('season-search-controls').hidden = !state.omdbEnabled;
+    byId('complete-seasons').disabled = !state.omdbEnabled || !supportedMode;
+    if (!supportedMode && byId('complete-seasons').checked) {
+      byId('complete-seasons').checked = false;
+      resetSeries();
+    }
+    const active = seasonMode();
+    byId('series-options').hidden = !active;
+    byId('series-choice').disabled = !active;
+    byId('season-number').disabled = !active;
+    byId('find-series').disabled = !active || !byId('query').value.trim() || Boolean(state.seriesController);
+    byId('limit').disabled = active;
+    byId('offset').disabled = active;
+    const advancedSeason = state.fields.get('season');
+    if (advancedSeason && active) advancedSeason.disabled = true;
+    message('season-mode-note', supportedMode ? '' : 'Season search is available in General search or TV mode.');
+  }
+
+  async function findSeries() {
+    const query = byId('query').value.trim();
+    if (!seasonMode() || !query) return;
+    resetSeries();
+    const generation = state.seriesGeneration;
+    const controller = new AbortController();
+    state.seriesController = controller;
+    updateSeasonControls();
+    message('series-status', 'Looking up series in OMDb…');
+    try {
+      const data = await api(`/api/series?${new URLSearchParams({ q: query })}`, { signal: controller.signal });
+      if (generation !== state.seriesGeneration) return;
+      const series = Array.isArray(data.series) ? data.series : [];
+      for (const item of series) {
+        const option = element('option', `${item.title} (${item.year || 'year unknown'}) · IMDb ${item.id}${item.total_seasons ? ` · ${item.total_seasons} seasons` : ''}`);
+        option.value = item.id;
+        byId('series-choice').append(option);
+      }
+      message('series-status', series.length ? 'Select the exact series before searching.' : 'No series found. Change the query and try again.');
+    } catch (error) {
+      if (generation === state.seriesGeneration && error.name !== 'AbortError') message('series-status', error.message, 'form-text status-error');
+    } finally {
+      if (generation === state.seriesGeneration) {
+        state.seriesController = null;
+        updateSeasonControls();
+      }
+    }
   }
 
   function updateCapabilities(preferredMode, preferredCategories) {
@@ -159,6 +226,7 @@
     if (!categories.size) categoryList.append(element('p', 'No categories available for the selected indexers.', 'small'));
     byId('clear-categories').disabled = !categories.size;
     renderCapabilities(selected);
+    updateSeasonControls();
   }
 
   function renderCapabilities(selected) {
@@ -195,6 +263,16 @@
     for (const input of byId('categories').querySelectorAll('input:checked')) params.append('cat', input.value);
     params.set('limit', byId('limit').value);
     params.set('offset', byId('offset').value);
+    if (seasonMode()) {
+      if (!['search', 'tvsearch'].includes(mode)) throw new Error('Choose General search or TV mode for season search.');
+      if (!state.seriesID) throw new Error('Find and select an exact series before searching complete seasons.');
+      params.set('complete_seasons', '1');
+      params.set('series_id', state.seriesID);
+      params.delete('season');
+      if (byId('season-number').value) params.set('season', byId('season-number').value);
+      params.set('offset', '0');
+      params.set('limit', '100');
+    }
     return params;
   }
 
@@ -214,6 +292,16 @@
     const ids = new Set(params.getAll('indexer'));
     for (const input of byId('indexer-list').querySelectorAll('input')) input.checked = !input.disabled && (!ids.size || ids.has(input.value));
     byId('query').value = params.get('q') || '';
+    resetSeries();
+    byId('complete-seasons').checked = state.omdbEnabled && params.get('complete_seasons') === '1';
+    byId('season-number').value = /^\d+$/.test(params.get('season') || '') ? params.get('season') : '';
+    if (seasonMode() && /^tt\d+$/.test(params.get('series_id') || '')) {
+      state.seriesID = params.get('series_id');
+      const option = element('option', `Restored series · IMDb ${state.seriesID} (find series to change)`);
+      option.value = state.seriesID;
+      byId('series-choice').append(option);
+      byId('series-choice').value = state.seriesID;
+    }
     byId('limit').value = /^\d+$/.test(params.get('limit') || '') ? params.get('limit') : '100';
     byId('offset').value = /^\d+$/.test(params.get('offset') || '') ? params.get('offset') : '0';
     byId('result-filter').value = params.get('filter') || '';
@@ -222,20 +310,21 @@
     state.direction = params.get('direction') === 'asc' ? 'asc' : 'desc';
     state.fieldValues.clear();
     for (const input of state.fields.values()) input.value = '';
-    for (const [name, value] of params) if (!reserved.has(name)) state.fieldValues.set(name, value);
+    for (const [name, value] of params) if (!reserved.has(name) && !(seasonMode() && name === 'season')) state.fieldValues.set(name, value);
     // Rebuild after clearing the old controls so they cannot overwrite restored values.
     state.fields.clear();
     updateCapabilities(params.get('t') || 'search', params.getAll('cat'));
     byId('advanced').open = byId('mode').value !== 'search' || Array.from(state.fields.values()).some((input) => input.value);
-    return params.has('t') || params.has('q') || params.has('indexer');
+    return params.has('t') || params.has('q') || params.has('indexer') || seasonMode();
   }
 
   function setSearching(busy) {
     byId('results-section').setAttribute('aria-busy', String(busy));
     byId('search-button').textContent = busy ? 'Search again' : 'Search';
     byId('cancel-search').hidden = !busy;
-    byId('previous-page').disabled = busy || !state.lastSearch || Number(state.lastSearch.get('offset')) <= 0;
-    byId('next-page').disabled = busy || !state.lastSearch || (!state.results.length && !state.errors.length);
+    const aggregated = state.lastSearch?.get('complete_seasons') === '1';
+    byId('previous-page').disabled = busy || aggregated || !state.lastSearch || Number(state.lastSearch.get('offset')) <= 0;
+    byId('next-page').disabled = busy || aggregated || !state.lastSearch || (!state.results.length && !state.errors.length);
   }
 
   function cancelSearch() {
@@ -259,11 +348,17 @@
     const generation = ++state.generation;
     state.controller = controller;
     state.lastSearch = new URLSearchParams(params);
+    state.searched = true;
+    state.resultVersion += 1;
+    state.seasons = [];
+    state.aggregation = null;
     state.results = [];
     state.errors = [];
     state.downloads.clear();
     state.destinations.clear();
-    state.searched = true;
+    state.seasonChoices.clear();
+    state.seasonDestinations.clear();
+    state.seasonDownloads.clear();
     persistURL(params, push);
     byId('offset').value = params.get('offset');
     byId('limit').value = params.get('limit');
@@ -276,16 +371,19 @@
       if (generation !== state.generation) return;
       state.results = Array.isArray(data.results) ? data.results : [];
       state.errors = Array.isArray(data.errors) ? data.errors : [];
+      state.seasons = state.omdbEnabled && params.get('complete_seasons') === '1' && Array.isArray(data.seasons) ? data.seasons : [];
+      state.aggregation = params.get('complete_seasons') === '1' ? data.aggregation : null;
       const errorBox = byId('search-errors');
       errorBox.replaceChildren();
       errorBox.hidden = !state.errors.length;
       if (state.errors.length) {
-        errorBox.append(element('p', 'Some indexers could not complete the search. Available results are shown.'));
+        errorBox.append(element('p', 'Some search or metadata requests could not complete. Available results and candidates are shown.'));
         const list = element('ul', undefined, 'mb-0');
         for (const error of state.errors) list.append(element('li', error));
         errorBox.append(list);
       }
-      message('search-status', state.results.length ? `Search complete${state.errors.length ? ' with partial errors' : ''}.` : `No releases returned${state.errors.length ? '; see indexer errors below' : '. Try another query, mode, category, or offset'}.`);
+      const aggregationNote = state.aggregation ? ` Aggregated ${state.aggregation.pages || 0} pages${state.aggregation.partial ? '; partial aggregation — more releases may exist' : ''}.` : '';
+      message('search-status', (state.results.length ? `Search complete${state.errors.length ? ' with partial errors' : ''}.` : `No releases returned${state.errors.length ? '; see errors below' : '. Try another query, mode, category, or offset'}.`) + aggregationNote, state.aggregation?.partial ? 'status-warning' : '');
       renderResults();
     } catch (error) {
       if (generation !== state.generation || error.name === 'AbortError') return;
@@ -331,6 +429,293 @@
     return Number(result[key]) || 0;
   }
 
+
+  function compareSeasonCandidates(a, b) {
+    return (Number(b.result.seeders) || 0) - (Number(a.result.seeders) || 0)
+      || String(a.result.title || '').localeCompare(String(b.result.title || ''), undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  function seasonPresentationGroups() {
+    if (!state.omdbEnabled || state.lastSearch?.get('complete_seasons') !== '1') return [];
+    const results = new Map(state.results.map((result) => [result.id, result]));
+    return state.seasons.map((season) => {
+      const candidates = (season.candidates || []).filter((candidate) => results.has(candidate.id))
+        .map((candidate) => ({ result: results.get(candidate.id), parsed: candidate.parsed }));
+      const episodes = new Map();
+      const packs = [];
+      for (const candidate of candidates) {
+        if (candidate.parsed.pack) packs.push(candidate);
+        else for (const episode of candidate.parsed.episodes || []) {
+          if (!episodes.has(episode)) episodes.set(episode, []);
+          episodes.get(episode).push(candidate);
+        }
+      }
+      packs.sort(compareSeasonCandidates);
+      for (const choices of episodes.values()) choices.sort(compareSeasonCandidates);
+      return { ...season, candidates, packs, episodes, expected: season.expected || [], missing: season.missing || [] };
+    });
+  }
+
+  function seasonEpisodeLabel(season, episode) {
+    return `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`;
+  }
+
+  function seasonCandidateMeta(candidate) {
+    const parsed = candidate.parsed;
+    const coverage = parsed.pack
+      ? `Season ${parsed.season} pack`
+      : parsed.episodes.length > 1
+        ? `Episodes ${parsed.episodes.join(', ')}`
+        : seasonEpisodeLabel(parsed.season, parsed.episodes[0]);
+    const quality = [parsed.resolution, parsed.source, parsed.codec].filter(Boolean).join(' · ') || 'Quality not identified';
+    const values = [
+      coverage,
+      `Release group: ${parsed.releaseGroup || 'not identified'}`,
+      quality,
+      `Tracker: ${candidate.result.indexer || candidate.result.indexer_id || 'unknown'}`,
+      `${Number(candidate.result.seeders) || 0} seeds`,
+      sizeText(Number(candidate.result.size)),
+    ];
+    if (!candidate.result.has_magnet && !candidate.result.has_torrent) values.push('No downloadable file or magnet');
+    return values.join(' · ');
+  }
+
+  function seasonChoice(name, value, title, meta, checked, disabled, onChange) {
+    const wrapper = element('div', undefined, 'season-choice');
+    const label = element('label');
+    const input = element('input');
+    input.type = 'radio';
+    input.name = name;
+    input.value = value;
+    input.checked = checked;
+    input.dataset.unavailable = String(disabled);
+    input.disabled = disabled;
+    input.addEventListener('change', onChange);
+    const text = element('span');
+    text.append(element('span', title, 'season-choice-title'), element('p', meta, 'season-choice-meta'));
+    label.append(input, text);
+    wrapper.append(label);
+    return { wrapper, input };
+  }
+
+  function seasonGroupNode(group, groupIndex) {
+    const downloadable = (candidate) => candidate.result.has_magnet || candidate.result.has_torrent;
+    let selection = state.seasonChoices.get(group.key);
+    const episodeNumbers = Array.from(new Set([...group.episodes.keys(), ...group.expected.map((episode) => episode.number)])).sort((a, b) => a - b);
+    const fillDefaults = () => {
+      const chosen = new Map();
+      for (const [episode, id] of Object.entries(selection.episodes)) {
+        const candidate = group.episodes.get(Number(episode))?.find((item) => item.result.id === id && downloadable(item));
+        if (candidate) chosen.set(id, candidate);
+      }
+      const covered = new Set(Array.from(chosen.values()).flatMap((candidate) => candidate.parsed.episodes));
+      for (const episode of episodeNumbers) {
+        if (Object.prototype.hasOwnProperty.call(selection.episodes, episode)) continue;
+        const choices = (group.episodes.get(episode) || []).filter(downloadable);
+        const existing = choices.find((candidate) => chosen.has(candidate.result.id));
+        const preferred = existing || choices.find((candidate) => candidate.parsed.episodes.every((number) => !covered.has(number))) || choices[0];
+        if (!preferred) continue;
+        chosen.set(preferred.result.id, preferred);
+        for (const number of preferred.parsed.episodes) {
+          covered.add(number);
+          if (!Object.prototype.hasOwnProperty.call(selection.episodes, number)) selection.episodes[number] = preferred.result.id;
+        }
+      }
+    };
+    if (!selection) {
+      const pack = group.packs.find(downloadable);
+      selection = { mode: pack ? `pack:${pack.result.id}` : 'episodes', episodes: {} };
+      fillDefaults();
+    }
+    state.seasonChoices.set(group.key, selection);
+    const details = element('details', undefined, 'season-group');
+    details.dataset.seasonKey = group.key;
+    const coverage = group.metadata_error ? 'Metadata unavailable — completeness unknown' : group.coverage_complete ? 'OMDb inventory covered' : 'Incomplete OMDb coverage';
+    details.append(element('summary', `${group.show} · Season ${group.season} · ${coverage} · ${group.candidates.length} releases · Inspect components`));
+    const content = element('div', undefined, 'season-group-content');
+    content.append(element('p', 'Coverage checks only the OMDb episode inventory; this does not mean the season has finished airing. Pack titles alone do not verify their contents. All original releases and download actions remain below.', 'season-group-note'));
+    if (group.metadata_error) content.append(element('p', group.metadata_error, 'season-group-note status-error'));
+    content.append(element('p', group.missing.length ? `Missing downloadable episodes: ${group.missing.map((number) => seasonEpisodeLabel(group.season, number)).join(', ')}` : group.expected.length ? 'No missing episodes in the OMDb inventory.' : 'No OMDb episode inventory available; completeness is unknown.', `season-group-note${group.missing.length || !group.expected.length ? ' status-warning' : ''}`));
+    const inventory = element('details');
+    inventory.append(element('summary', `Expected episodes from OMDb (${group.expected.length})`));
+    const inventoryList = element('ul', undefined, 'season-inventory');
+    for (const episode of group.expected) inventoryList.append(element('li', `${seasonEpisodeLabel(group.season, episode.number)} · ${episode.title || 'Title unknown'} · Released: ${episode.released || 'unknown'}${group.missing.includes(episode.number) ? ' · Missing downloadable candidate' : ''}`));
+    inventory.append(inventoryList);
+    content.append(inventory);
+
+    const packField = element('fieldset', undefined, 'season-choice-list');
+    packField.append(element('legend', 'Choose a season pack or individual episodes'));
+    for (const candidate of group.packs) {
+      const id = candidate.result.id;
+      const choice = seasonChoice(`season-mode-${groupIndex}`, `pack:${id}`, candidate.result.title || '(Untitled season pack)',
+        `Unverified pack contents · ${seasonCandidateMeta(candidate)}`, selection.mode === `pack:${id}`, !downloadable(candidate),
+        () => { selection.mode = `pack:${id}`; refresh(); });
+      choice.input.dataset.mode = `pack:${id}`;
+      packField.append(choice.wrapper);
+    }
+    const episodeMode = seasonChoice(`season-mode-${groupIndex}`, 'episodes', 'Individual episode releases',
+      'Review one choice per episode; multi-episode releases are added only once.', selection.mode === 'episodes', false,
+      () => { selection.mode = 'episodes'; fillDefaults(); refresh(); });
+    episodeMode.input.dataset.mode = 'episodes';
+    packField.append(episodeMode.wrapper);
+    content.append(packField);
+
+    const episodeList = element('div', undefined, 'season-episode-list');
+    for (const episode of episodeNumbers) {
+      const field = element('fieldset', undefined, 'season-episode');
+      field.append(element('legend', seasonEpisodeLabel(group.season, episode)));
+      const candidates = group.episodes.get(episode) || [];
+      if (!candidates.length) field.append(element('p', 'No individual downloadable candidate identified.', 'season-group-note status-warning'));
+      for (const candidate of candidates) {
+        const id = candidate.result.id;
+        const choice = seasonChoice(`season-episode-${groupIndex}-${episode}`, id, candidate.result.title || '(Untitled release)',
+          seasonCandidateMeta(candidate), selection.mode === 'episodes' && selection.episodes[episode] === id, !downloadable(candidate),
+          () => {
+            selection.mode = 'episodes';
+            fillDefaults();
+            for (const number of candidate.parsed.episodes) selection.episodes[number] = id;
+            refresh();
+          });
+        choice.input.dataset.episode = String(episode);
+        field.append(choice.wrapper);
+      }
+      if (candidates.length) {
+        const skip = seasonChoice(`season-episode-${groupIndex}-${episode}`, '', 'Skip this episode', 'Do not select a release for this episode.',
+          selection.mode === 'episodes' && !selection.episodes[episode], false,
+          () => {
+            selection.mode = 'episodes';
+            const skipped = new Set(selectedCandidates().filter((candidate) => candidate.parsed.episodes.includes(episode)).map((candidate) => candidate.result.id));
+            for (const number of Object.keys(selection.episodes)) {
+              if (skipped.has(selection.episodes[number])) selection.episodes[number] = '';
+            }
+            selection.episodes[episode] = '';
+            refresh();
+          });
+        skip.input.dataset.episode = String(episode);
+        field.append(skip.wrapper);
+      }
+      episodeList.append(field);
+    }
+    content.append(episodeList);
+
+    const actions = element('div', undefined, 'season-group-actions');
+    const destination = element('select', undefined, 'form-control');
+    destination.setAttribute('aria-label', `Transmission destination for ${group.show} season ${group.season}`);
+    for (const endpoint of state.endpoints) {
+      const option = element('option', endpoint.name);
+      option.value = endpoint.name;
+      destination.append(option);
+    }
+    const previousDestination = state.seasonDestinations.get(group.key);
+    if (state.endpoints.some((endpoint) => endpoint.name === previousDestination)) destination.value = previousDestination;
+    destination.addEventListener('change', () => state.seasonDestinations.set(group.key, destination.value));
+    const button = element('button', 'Add season', 'btn-solid theme-primary');
+    button.type = 'button';
+    const warning = element('p', '', 'season-group-note status-warning');
+    const status = element('p', '', 'season-group-status');
+    status.setAttribute('role', 'status');
+    const outcomes = element('ul', undefined, 'season-outcomes');
+    const selectedCandidates = () => {
+      if (selection.mode.startsWith('pack:')) return group.packs.filter((candidate) => candidate.result.id === selection.mode.slice(5) && downloadable(candidate));
+      const unique = new Map();
+      for (const episode of episodeNumbers) {
+        const candidate = group.episodes.get(episode)?.find((item) => item.result.id === selection.episodes[episode] && downloadable(item));
+        if (candidate) unique.set(candidate.result.id, candidate);
+      }
+      return Array.from(unique.values());
+    };
+    const refresh = () => {
+      const record = state.seasonDownloads.get(group.key) || { pending: false, message: '', items: [] };
+      const selected = selectedCandidates();
+      button.disabled = record.pending || !selected.length || !state.endpoints.length;
+      destination.disabled = record.pending || !state.endpoints.length;
+      for (const input of details.querySelectorAll('input[type="radio"]')) {
+        input.disabled = record.pending || input.dataset.unavailable === 'true';
+        input.checked = input.dataset.mode !== undefined
+          ? selection.mode === input.dataset.mode
+          : selection.mode === 'episodes' && (selection.episodes[input.dataset.episode] || '') === input.value;
+      }
+      const counts = new Map();
+      if (selection.mode === 'episodes') for (const candidate of selected) {
+        for (const episode of candidate.parsed.episodes) counts.set(episode, (counts.get(episode) || 0) + 1);
+      }
+      const overlap = Array.from(counts).filter(([, count]) => count > 1).map(([episode]) => episode);
+      const unselected = selection.mode === 'episodes' ? group.expected.filter((episode) => !counts.has(episode.number)).map((episode) => episode.number) : [];
+      warning.textContent = [
+        overlap.length ? `Overlapping episode coverage: ${overlap.map((number) => seasonEpisodeLabel(group.season, number)).join(', ')}. Review selections to avoid redundant downloads.` : '',
+        unselected.length ? `Current selection does not cover: ${unselected.map((number) => seasonEpisodeLabel(group.season, number)).join(', ')}.` : '',
+        selection.mode.startsWith('pack:') ? 'Selected pack contents are unverified; the title is not evidence of complete coverage.' : '',
+      ].filter(Boolean).join(' ');
+      warning.hidden = !warning.textContent;
+      button.textContent = record.pending ? `Adding ${record.done}/${record.total}…`
+        : selection.mode.startsWith('pack:') ? 'Add season pack' : `Add ${selected.length} selected release${selected.length === 1 ? '' : 's'}`;
+      status.textContent = record.message || '';
+      status.className = `season-group-status${record.error ? ' status-error' : record.message ? ' status-success' : ''}`;
+      outcomes.replaceChildren();
+      for (const item of record.items || []) outcomes.append(element('li', `${item.title}: ${item.message}`, item.error ? 'status-error' : item.pending ? '' : 'status-success'));
+      outcomes.hidden = !(record.items || []).length;
+    };
+    button.addEventListener('click', async () => {
+      const selected = selectedCandidates();
+      const endpoint = destination.value;
+      if (!selected.length || !endpoint || state.seasonDownloads.get(group.key)?.pending) return;
+      const version = state.resultVersion;
+      const record = { pending: true, done: 0, total: selected.length, message: '', error: false,
+        items: selected.map((candidate) => ({ title: candidate.result.title || 'Untitled release', pending: true, message: 'Queued' })) };
+      state.seasonDownloads.set(group.key, record);
+      state.seasonDestinations.set(group.key, endpoint);
+      const current = () => version === state.resultVersion && state.seasonDownloads.get(group.key) === record;
+      const update = () => { if (!current()) return; if (details.isConnected) refresh(); else renderResults(); };
+      update();
+      let added = 0;
+      let duplicates = 0;
+      let failed = 0;
+      for (const [index, candidate] of selected.entries()) {
+        const item = record.items[index];
+        item.message = `Sending to ${endpoint}…`;
+        update();
+        try {
+          const data = await api('/api/download', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: candidate.result.id, endpoint }),
+          });
+          if (data.duplicate) duplicates += 1;
+          else added += 1;
+          item.message = `${data.duplicate ? 'Already present' : 'Added'} on ${endpoint}: ${data.name || item.title}`;
+        } catch (error) {
+          failed += 1;
+          item.error = true;
+          item.message = `${endpoint}: ${error.message}`;
+        }
+        item.pending = false;
+        record.done += 1;
+        update();
+      }
+      record.pending = false;
+      record.error = failed > 0;
+      record.message = `${added} added · ${duplicates} already present · ${failed} failed on ${endpoint}.`;
+      update();
+    });
+    actions.append(destination, button);
+    content.append(warning, actions, status, outcomes);
+    if (!state.endpoints.length) content.append(element('p', 'No Transmission endpoints available.', 'season-group-note'));
+    details.append(content);
+    refresh();
+    return details;
+  }
+
+  function renderSeasonGroups(groups) {
+    const container = byId('season-groups');
+    const open = new Set(Array.from(container.querySelectorAll('details.season-group[open]'), (details) => details.dataset.seasonKey));
+    container.replaceChildren();
+    container.hidden = !groups.length;
+    groups.forEach((group, index) => {
+      const node = seasonGroupNode(group, index);
+      node.open = open.has(group.key);
+      container.append(node);
+    });
+  }
+
   function renderResults(emptyText) {
     const filter = byId('result-filter').value.trim().toLocaleLowerCase();
     const minSeeds = Math.max(0, Number(byId('min-seeds').value) || 0);
@@ -344,6 +729,8 @@
       const comparison = typeof left === 'string' ? left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }) : left - right;
       return state.direction === 'asc' ? comparison : -comparison;
     });
+    const groups = seasonPresentationGroups();
+    renderSeasonGroups(groups);
     for (const button of document.querySelectorAll('[data-sort]')) {
       const active = button.dataset.sort === state.sort;
       button.parentElement.setAttribute('aria-sort', active ? (state.direction === 'asc' ? 'ascending' : 'descending') : 'none');
@@ -353,7 +740,7 @@
     const direction = byId('mobile-sort-direction');
     direction.textContent = state.direction === 'asc' ? 'Ascending ↑' : 'Descending ↓';
     direction.setAttribute('aria-label', `Sort ${state.direction === 'asc' ? 'ascending; switch to descending' : 'descending; switch to ascending'}`);
-    byId('result-count').textContent = `${results.length} shown / ${state.results.length} returned on this page`;
+    byId('result-count').textContent = `${results.length} shown / ${state.results.length} returned${state.lastSearch?.get('complete_seasons') === '1' ? ' across aggregated pages' : ' on this page'}${groups.length ? ` · ${groups.length} season proposal${groups.length === 1 ? '' : 's'} above (unfiltered)` : ''}`;
     const body = byId('result-rows');
     const cards = byId('result-cards');
     body.replaceChildren();
@@ -376,8 +763,11 @@
     }
     const offset = Number(state.lastSearch?.get('offset')) || 0;
     const limit = Number(state.lastSearch?.get('limit')) || Number(byId('limit').value) || 100;
-    byId('page-info').textContent = `Offset ${offset.toLocaleString()} · up to ${limit.toLocaleString()} results per indexer`;
+    byId('page-info').textContent = state.lastSearch?.get('complete_seasons') === '1'
+      ? `Aggregated season search · ${state.aggregation?.pages || 0} pages${state.aggregation?.partial ? ' · Partial results' : ''} · Pagination disabled`
+      : `Offset ${offset.toLocaleString()} · up to ${limit.toLocaleString()} results per indexer`;
   }
+
 
   function appendResultTitle(container, result) {
     container.append(element('div', result.title || '(Untitled release)', 'result-title'));
@@ -475,6 +865,7 @@
       button.addEventListener('click', async () => {
         const endpoint = destination.value;
         const key = keyFor();
+        const version = state.resultVersion;
         if (state.downloads.get(key)?.pending) return;
         state.destinations.set(result.id, endpoint);
         state.downloads.set(key, { pending: true, message: `Sending to ${endpoint}…` });
@@ -484,8 +875,10 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ id: result.id, endpoint }),
           });
+          if (version !== state.resultVersion) return;
           state.downloads.set(key, { message: `${data.duplicate ? 'Already present' : 'Added'} on ${endpoint}: ${data.name || result.title}` });
         } catch (error) {
+          if (version !== state.resultVersion) return;
           state.downloads.set(key, { error: true, message: `${endpoint}: ${error.message}` });
         }
         if (button.isConnected) displayStatus();
@@ -551,6 +944,7 @@
     try {
       const [config, discovery] = await Promise.all([api('/api/config'), api('/api/indexers')]);
       state.endpoints = Array.isArray(config.endpoints) ? config.endpoints : [];
+      state.omdbEnabled = config.omdb_enabled === true;
       state.indexers = Array.isArray(discovery.indexers) ? discovery.indexers : [];
       byId('indexer-list').replaceChildren();
       state.indexers.forEach((indexer, index) => {
@@ -587,6 +981,19 @@
   }
 
   form.addEventListener('submit', (event) => { event.preventDefault(); search(); });
+  byId('query').addEventListener('input', () => {
+    resetSeries();
+    updateSeasonControls();
+  });
+  byId('complete-seasons').addEventListener('change', () => {
+    resetSeries();
+    updateCapabilities();
+  });
+  byId('find-series').addEventListener('click', findSeries);
+  byId('series-choice').addEventListener('change', () => {
+    state.seriesID = byId('series-choice').value;
+    message('series-status', state.seriesID ? `Selected IMDb ${state.seriesID}.` : 'Select an exact series before searching.');
+  });
   byId('indexer-list').addEventListener('change', () => updateCapabilities());
   byId('mode').addEventListener('change', () => updateCapabilities());
   byId('select-all').addEventListener('click', () => {
@@ -607,7 +1014,7 @@
   });
   for (const [id, direction] of [['previous-page', -1], ['next-page', 1]]) {
     byId(id).addEventListener('click', () => {
-      if (!state.lastSearch) return;
+      if (!state.lastSearch || state.lastSearch.get('complete_seasons') === '1') return;
       const params = new URLSearchParams(state.lastSearch);
       const offset = Number(params.get('offset')) || 0;
       const limit = Number(params.get('limit')) || 100;
@@ -647,6 +1054,14 @@
     cancelSearch();
     if (restoreURL()) search(false);
     else {
+      state.resultVersion += 1;
+      state.seasons = [];
+      state.aggregation = null;
+      state.seasonChoices.clear();
+      state.seasonDestinations.clear();
+      state.seasonDownloads.clear();
+      state.downloads.clear();
+      state.destinations.clear();
       state.results = [];
       state.errors = [];
       state.lastSearch = null;

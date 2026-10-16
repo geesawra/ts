@@ -19,6 +19,14 @@ api_key = "replace-with-your-jackett-api-key"
 # Optional positive request timeout in seconds; the default is 60.
 timeout_seconds = 60
 
+# Optional OMDb metadata for explicit complete-season searches.
+# Omit this section or leave api_key empty to keep ordinary torrent search only.
+# Obtain a key from https://www.omdbapi.com/apikey.aspx; never share this secret.
+# [omdb]
+# api_key = "replace-with-your-omdb-api-key"
+# Optional positive request timeout in seconds; defaults to 60 even when disabled.
+# timeout_seconds = 60
+
 # Define at least one Transmission endpoint. Names must be nonempty and unique;
 # each name appears as a download destination in the browser.
 [[transmission]]

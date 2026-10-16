@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,35 @@ func TestDownloadBoundary(t *testing.T) {
 			defer resp.Body.Close()
 			if resp.StatusCode != tc.status {
 				t.Fatalf("status %d, want %d", resp.StatusCode, tc.status)
+			}
+		})
+	}
+}
+
+func TestOriginBoundary(t *testing.T) {
+	handler := (&Server{}).middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		name, origin, site string
+		status             int
+	}{
+		{"LAN origin without fetch metadata", "http://192.168.1.10:8080", "", 204},
+		{"same origin with fetch metadata", "http://192.168.1.10:8080", "same-origin", 204},
+		{"opaque origin", "null", "", 403},
+		{"different port", "http://192.168.1.10:8081", "", 403},
+		{"different host", "http://192.168.1.11:8080", "", 403},
+		{"cross-site fetch metadata", "http://192.168.1.10:8080", "cross-site", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest("POST", "http://192.168.1.10:8080/api/download", strings.NewReader(`{}`))
+			request.Header.Set("Origin", tc.origin)
+			request.Header.Set("Sec-Fetch-Site", tc.site)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("status %d, want %d: %s", response.Code, tc.status, response.Body.String())
 			}
 		})
 	}

@@ -30,6 +30,29 @@
           <button id="cancel-search" class="btn-outline theme-secondary" type="button" hidden>Cancel search</button>
         </div>
         <p id="query-help" class="form-text mb-3">Leave empty for the latest releases.</p>
+        <fieldset id="season-search-controls" class="season-search-controls mb-3" hidden>
+          <legend class="form-label">Series metadata</legend>
+          <div class="selector-choice">
+            <input id="complete-seasons" class="check" type="checkbox">
+            <label for="complete-seasons">Show complete seasons</label>
+          </div>
+          <div id="series-options" hidden>
+            <p class="form-text">Find a series from the query, then choose its exact title, year, and IMDb ID. Coverage means the OMDb episode inventory, not that a season has finished airing.</p>
+            <div class="query-controls">
+              <button id="find-series" class="btn-outline theme-secondary" type="button">Find series</button>
+              <div class="query-field">
+                <label for="series-choice" class="form-label">Exact series</label>
+                <select id="series-choice" class="form-control" aria-describedby="series-status"></select>
+              </div>
+              <div>
+                <label for="season-number" class="form-label">Season (blank for all)</label>
+                <input id="season-number" class="form-control" type="number" min="1" step="1">
+              </div>
+            </div>
+            <p id="series-status" class="form-text" role="status" hidden></p>
+          </div>
+          <p id="season-mode-note" class="form-text" hidden></p>
+        </fieldset>
         <div class="row g-3">
           <div class="col-12 md:col-6">
             <fieldset>
@@ -93,6 +116,7 @@
         </div>
       </div>
       <p id="result-count" class="small" role="status">0 results</p>
+      <div id="season-groups" class="season-groups" hidden></div>
       <div class="mobile-sort-controls mb-3">
         <label for="mobile-sort">Sort by</label>
         <select id="mobile-sort" class="form-control"></select>
@@ -100,7 +124,7 @@
       </div>
       <div class="table-responsive results-container" role="region" aria-label="Search results" tabindex="0">
         <table class="table table-striped table-hover result-table">
-          <caption>Sort the current page using the column headings. Choose a Transmission destination, then Add to start downloading.</caption>
+          <caption>All returned releases retain their individual download actions. Optional season proposals appear above when requested.</caption>
           <thead>
             <tr>
               <th scope="col" aria-sort="none"><button type="button" class="sort-button" data-sort="title">Title</button></th>

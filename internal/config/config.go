@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Server       Server         `toml:"server"`
 	Jackett      Jackett        `toml:"jackett"`
+	OMDb         OMDb           `toml:"omdb"`
 	Transmission []Transmission `toml:"transmission"`
 }
 
@@ -25,6 +26,11 @@ type Server struct {
 
 type Jackett struct {
 	URL            string `toml:"url"`
+	APIKey         string `toml:"api_key"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
+}
+
+type OMDb struct {
 	APIKey         string `toml:"api_key"`
 	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
@@ -55,6 +61,10 @@ func Load(path string) (Config, error) {
 			APIKey         string `toml:"api_key"`
 			TimeoutSeconds *int   `toml:"timeout_seconds"`
 		} `toml:"jackett"`
+		OMDb struct {
+			APIKey         string `toml:"api_key"`
+			TimeoutSeconds *int   `toml:"timeout_seconds"`
+		} `toml:"omdb"`
 		Transmission []struct {
 			Name           string `toml:"name"`
 			URL            string `toml:"url"`
@@ -71,6 +81,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.Server = document.Server
 	cfg.Jackett = Jackett{URL: document.Jackett.URL, APIKey: document.Jackett.APIKey, TimeoutSeconds: timeout(document.Jackett.TimeoutSeconds)}
+	cfg.OMDb = OMDb{APIKey: strings.TrimSpace(document.OMDb.APIKey), TimeoutSeconds: timeout(document.OMDb.TimeoutSeconds)}
 	for _, endpoint := range document.Transmission {
 		cfg.Transmission = append(cfg.Transmission, Transmission{
 			Name: endpoint.Name, URL: endpoint.URL, Username: endpoint.Username,
@@ -106,6 +117,9 @@ func validate(cfg Config) error {
 	}
 	if !validTimeout(cfg.Jackett.TimeoutSeconds) {
 		return errors.New("jackett.timeout_seconds must be positive and fit a Go duration")
+	}
+	if !validTimeout(cfg.OMDb.TimeoutSeconds) {
+		return errors.New("omdb.timeout_seconds must be positive and fit a Go duration")
 	}
 	if len(cfg.Transmission) == 0 {
 		return errors.New("at least one transmission endpoint is required")

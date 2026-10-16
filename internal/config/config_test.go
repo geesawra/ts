@@ -46,6 +46,9 @@ timeout_seconds = 120
 	if len(cfg.Transmission) != 2 || cfg.Transmission[0].TimeoutSeconds != 60 || cfg.Transmission[1].TimeoutSeconds != 120 {
 		t.Fatalf("unexpected endpoint defaults: %#v", cfg.Transmission)
 	}
+	if cfg.OMDb.APIKey != "" || cfg.OMDb.TimeoutSeconds != 60 {
+		t.Fatalf("OMDb must be disabled by default: %#v", cfg.OMDb)
+	}
 	if cfg.Transmission[0].Username != "transmission-user" || cfg.Transmission[0].Password != "transmission-password" || cfg.Transmission[0].DownloadDir != "/srv/downloads" {
 		t.Fatalf("endpoint settings were not preserved: %#v", cfg.Transmission[0])
 	}
@@ -89,6 +92,12 @@ func TestInvalidConfiguration(t *testing.T) {
 		{"zero endpoint timeout", validConfig + "timeout_seconds = 0\n"},
 		{"negative endpoint timeout", validConfig + "timeout_seconds = -1\n"},
 		{"overflowing duration", validConfig + "timeout_seconds = 9223372037\n"},
+		{"zero disabled OMDb timeout", validConfig + "\n[omdb]\ntimeout_seconds = 0\n"},
+		{"negative disabled OMDb timeout", validConfig + "\n[omdb]\ntimeout_seconds = -1\n"},
+		{"overflowing disabled OMDb timeout", validConfig + "\n[omdb]\ntimeout_seconds = 9223372037\n"},
+		{"zero enabled OMDb timeout", validConfig + "\n[omdb]\napi_key = 'private-api-key'\ntimeout_seconds = 0\n"},
+		{"unknown OMDb field", validConfig + "\n[omdb]\napi_key = 'private-api-key'\ntimeuot_seconds = 5\n"},
+		{"wrong OMDb key type", validConfig + "\n[omdb]\napi_key = ['private-api-key']\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -120,5 +129,32 @@ func TestRejectUnsafeURLs(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOptionalOMDbConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		section string
+		key     string
+		timeout int
+	}{
+		{"absent", "", "", 60},
+		{"empty section", "[omdb]\n", "", 60},
+		{"blank key", "[omdb]\napi_key = '  '\n", "", 60},
+		{"key only", "[omdb]\napi_key = 'private-omdb-key'\n", "private-omdb-key", 60},
+		{"explicit timeout", "[omdb]\napi_key = ' private-omdb-key '\ntimeout_seconds = 12\n", "private-omdb-key", 12},
+		{"disabled custom timeout", "[omdb]\ntimeout_seconds = 7\n", "", 7},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := loadText(t, validConfig+"\n"+test.section)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.OMDb.APIKey != test.key || cfg.OMDb.TimeoutSeconds != test.timeout {
+				t.Fatal("OMDb settings were not preserved")
+			}
+		})
 	}
 }

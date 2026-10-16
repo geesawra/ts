@@ -17,6 +17,7 @@ import (
 
 	"ts/internal/config"
 	"ts/internal/jackett"
+	"ts/internal/omdb"
 	"ts/internal/transmission"
 	"ts/web"
 )
@@ -26,11 +27,12 @@ type cachedResult struct {
 	expires time.Time
 }
 type Server struct {
-	cfg     config.Config
-	jackett *jackett.Client
-	clients map[string]*transmission.Client
-	mu      sync.Mutex
-	results map[string]cachedResult
+	cfg      config.Config
+	jackett  *jackett.Client
+	clients  map[string]*transmission.Client
+	mu       sync.Mutex
+	results  map[string]cachedResult
+	metadata seasonMetadata
 }
 type publicResult struct {
 	ID                   string   `json:"id"`
@@ -51,6 +53,9 @@ type publicResult struct {
 
 func New(cfg config.Config) http.Handler {
 	s := &Server{cfg: cfg, jackett: jackett.New(cfg.Jackett.URL, cfg.Jackett.APIKey, time.Duration(cfg.Jackett.TimeoutSeconds)*time.Second), clients: make(map[string]*transmission.Client), results: make(map[string]cachedResult)}
+	if strings.TrimSpace(cfg.OMDb.APIKey) != "" {
+		s.metadata = omdb.New(cfg.OMDb.APIKey, time.Duration(cfg.OMDb.TimeoutSeconds)*time.Second)
+	}
 	for _, ep := range cfg.Transmission {
 		s.clients[ep.Name] = transmission.New(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second)
 	}
@@ -58,6 +63,7 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/config", s.configuration)
 	mux.HandleFunc("GET /api/indexers", s.indexers)
+	mux.HandleFunc("GET /api/series", s.series)
 	mux.HandleFunc("GET /api/search", s.search)
 	mux.HandleFunc("POST /api/download", s.download)
 	mux.HandleFunc("GET /api/torrent", s.torrent)
@@ -90,7 +96,7 @@ func fail(w http.ResponseWriter, status int, message string) {
 func (s *Server) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path == "/healthz" {
@@ -134,7 +140,7 @@ func (s *Server) configuration(w http.ResponseWriter, r *http.Request) {
 	for _, ep := range s.cfg.Transmission {
 		endpoints = append(endpoints, map[string]string{"name": ep.Name})
 	}
-	jsonResponse(w, 200, map[string]any{"endpoints": endpoints, "authenticated": s.cfg.Server.Username != ""})
+	jsonResponse(w, 200, map[string]any{"endpoints": endpoints, "authenticated": s.cfg.Server.Username != "", "omdb_enabled": s.metadata != nil})
 }
 func (s *Server) indexers(w http.ResponseWriter, r *http.Request) {
 	v, err := s.jackett.Indexers(r.Context())
@@ -161,7 +167,7 @@ func validSearchKey(key string) bool {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	params := url.Values{}
 	for key, values := range r.URL.Query() {
-		if key == "indexer" {
+		if key == "indexer" || key == "complete_seasons" || key == "series_id" {
 			continue
 		}
 		if !validSearchKey(key) {
@@ -176,7 +182,23 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if cats := params["cat"]; len(cats) > 1 {
 		params.Set("cat", strings.Join(cats, ","))
 	}
-	result, err := s.jackett.Search(r.Context(), r.URL.Query()["indexer"], params)
+	if r.URL.Query().Get("complete_seasons") != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		defer cancel()
+		r = r.WithContext(ctx)
+	}
+	seasonRequest, ok := s.prepareSeasonSearch(w, r, params)
+	if !ok {
+		return
+	}
+	var result jackett.SearchResponse
+	var aggregation aggregationInfo
+	var err error
+	if seasonRequest != nil {
+		result, aggregation, err = s.aggregateSeasons(r.Context(), r.URL.Query()["indexer"], params)
+	} else {
+		result, err = s.jackett.Search(r.Context(), r.URL.Query()["indexer"], params)
+	}
 	if err != nil {
 		fail(w, 502, err.Error())
 		return
@@ -218,6 +240,11 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	errors := result.Errors
 	if errors == nil {
 		errors = []string{}
+	}
+	if seasonRequest != nil {
+		groups := s.buildSeasonGroups(r.Context(), seasonRequest, rows)
+		jsonResponse(w, 200, map[string]any{"results": rows, "errors": errors, "seasons": groups, "aggregation": aggregation})
+		return
 	}
 	jsonResponse(w, 200, map[string]any{"results": rows, "errors": errors})
 }
