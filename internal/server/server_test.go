@@ -107,7 +107,7 @@ func TestSearchHidesCredentialsAndDownloadsCachedTorrent(t *testing.T) {
 			decoder.UseNumber()
 			decoder.Decode(&added)
 			adds <- added
-			json.NewEncoder(w).Encode(map[string]any{"result": "success", "tag": added["tag"], "arguments": map[string]any{"torrent-added": map[string]string{"name": "ISO", "hashString": "abc"}}})
+			json.NewEncoder(w).Encode(map[string]any{"result": "success", "tag": added["tag"], "arguments": map[string]any{"torrent-added": map[string]string{"name": "ISO", "hashString": managedTorrentHash}}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -240,7 +240,7 @@ func TestAddResolvesJackettMagnetRedirect(t *testing.T) {
 				return
 			}
 			adds <- request.Arguments
-			json.NewEncoder(w).Encode(map[string]any{"result": "success", "tag": request.Tag, "arguments": map[string]any{"torrent-added": map[string]string{"name": "Redirected release", "hashString": "hash"}}})
+			json.NewEncoder(w).Encode(map[string]any{"result": "success", "tag": request.Tag, "arguments": map[string]any{"torrent-added": map[string]string{"name": "Redirected release", "hashString": managedTorrentHash}}})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			http.NotFound(w, r)

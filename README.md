@@ -5,6 +5,7 @@ Search Jackett and send torrents to named Transmission instances. A single Go bi
 - Tracker/category filters, optional advanced search, sorting and pagination. Native result cards on smaller screens; a table on desktop.
 - Result-page title/tracker/category and minimum-seed filters live under **Result filters**, collapsed by default. Links with active result filters expand them automatically.
 - Optional OMDb-backed season search: aggregate tracker pages on the server, inspect parsed release components, choose a pack or episode releases, and add them sequentially.
+- A label-scoped Transmission panel: track progress and transfer stats, start/pause torrents, or remove them with a choice to keep or delete downloaded files.
 - Configure everything in TOML; credentials stay server-side.
 
 > **Development disclaimer:** This program was developed with LLMs under explicit direction from a human. Review it before use; no warranty is provided.
@@ -21,6 +22,21 @@ go build -o ts .
 ```
 
 Open **http://127.0.0.1:8080**. Restart after configuration changes. `config.toml` is ignored by Git.
+
+## Torrents added with ts
+
+Requires **Transmission 3.0 or newer** for torrent labels. Every **Add** action, including season batches, applies the `added-with-ts` label. Adding an existing torrent also applies this label while preserving its other labels.
+
+Torrents added through ts default to `seed_ratio_limit = 0`, which pauses them as soon as their downloads complete. Set `seed_ratio_limit` to `1.0` on a `[[transmission]]` endpoint to seed to about a 1:1 upload/download ratio. This is a ratio limit, so Transmission cannot use it to stop after exactly 1 MB uploaded; that would need a separate byte-count monitor.
+
+Open **Torrents** in the main navigation (`/torrents`) and choose a configured Transmission instance. This dedicated page shows only labeled torrents, with name filtering, state, progress, size, download/upload speeds, ETA, transferred totals, and ratio. It loads automatically and refreshes every five seconds while the browser tab is visible, pausing automatic rerenders while a torrent control has focus. **Refresh** updates it manually. Torrent management stays separate from search and remains usable when Jackett is unavailable.
+
+**Start**, **Pause**, and both removal choices are restricted to labeled torrents on the server, not merely hidden in the UI. **Remove (keep files)** leaves downloaded files intact. **Remove and delete files** explicitly asks Transmission to delete the torrent's downloaded files on its host; its separate confirmation warns that this cannot be undone from ts and can affect other torrents sharing those files. Canceling either confirmation makes no change. This is a small management panel, not a replacement for Transmission's file, tracker, or daemon settings.
+
+Previously added, untagged torrents are not automatically migrated: apply `added-with-ts` in Transmission, or add the same torrent through ts again. Removing the label hides a torrent and prevents further panel actions. Labels are a scope convention, not a security boundary against other Transmission clients; external label changes cannot be atomic with ts actions.
+
+**Download .torrent** and **Copy magnet** hand content to an external client; ts cannot label torrents added that way. No new configuration or local torrent database is needed.
+
 
 ## Optional complete-season search
 

@@ -57,7 +57,7 @@ func New(cfg config.Config) http.Handler {
 		s.metadata = omdb.New(cfg.OMDb.APIKey, time.Duration(cfg.OMDb.TimeoutSeconds)*time.Second)
 	}
 	for _, ep := range cfg.Transmission {
-		s.clients[ep.Name] = transmission.New(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second)
+		s.clients[ep.Name] = transmission.NewWithSeedRatioLimit(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second, ep.SeedRatioLimit)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
@@ -68,14 +68,21 @@ func New(cfg config.Config) http.Handler {
 	mux.HandleFunc("POST /api/download", s.download)
 	mux.HandleFunc("GET /api/torrent", s.torrent)
 	mux.HandleFunc("GET /api/magnet", s.magnet)
+	mux.HandleFunc("GET /api/torrents", s.torrents)
+	mux.HandleFunc("POST /api/torrents/action", s.torrentAction)
 	assets, _ := fs.Sub(web.Assets, "static")
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		page := "index.html"
+		switch r.URL.Path {
+		case "/":
+		case "/torrents":
+			page = "torrents.html"
+		default:
 			http.NotFound(w, r)
 			return
 		}
-		data, err := fs.ReadFile(assets, "index.html")
+		data, err := fs.ReadFile(assets, page)
 		if err != nil {
 			fail(w, 500, "UI unavailable")
 			return

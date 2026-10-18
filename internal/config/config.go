@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"strings"
@@ -36,12 +37,13 @@ type OMDb struct {
 }
 
 type Transmission struct {
-	Name           string `toml:"name"`
-	URL            string `toml:"url"`
-	Username       string `toml:"username"`
-	Password       string `toml:"password"`
-	DownloadDir    string `toml:"download_dir"`
-	TimeoutSeconds int    `toml:"timeout_seconds"`
+	Name           string  `toml:"name"`
+	URL            string  `toml:"url"`
+	Username       string  `toml:"username"`
+	Password       string  `toml:"password"`
+	DownloadDir    string  `toml:"download_dir"`
+	TimeoutSeconds int     `toml:"timeout_seconds"`
+	SeedRatioLimit float64 `toml:"seed_ratio_limit"`
 }
 
 // Load reads a complete configuration and rejects unknown TOML fields.
@@ -66,12 +68,13 @@ func Load(path string) (Config, error) {
 			TimeoutSeconds *int   `toml:"timeout_seconds"`
 		} `toml:"omdb"`
 		Transmission []struct {
-			Name           string `toml:"name"`
-			URL            string `toml:"url"`
-			Username       string `toml:"username"`
-			Password       string `toml:"password"`
-			DownloadDir    string `toml:"download_dir"`
-			TimeoutSeconds *int   `toml:"timeout_seconds"`
+			Name           string  `toml:"name"`
+			URL            string  `toml:"url"`
+			Username       string  `toml:"username"`
+			Password       string  `toml:"password"`
+			DownloadDir    string  `toml:"download_dir"`
+			TimeoutSeconds *int    `toml:"timeout_seconds"`
+			SeedRatioLimit float64 `toml:"seed_ratio_limit"`
 		} `toml:"transmission"`
 	}
 	document.Server = cfg.Server
@@ -87,6 +90,7 @@ func Load(path string) (Config, error) {
 			Name: endpoint.Name, URL: endpoint.URL, Username: endpoint.Username,
 			Password: endpoint.Password, DownloadDir: endpoint.DownloadDir,
 			TimeoutSeconds: timeout(endpoint.TimeoutSeconds),
+			SeedRatioLimit: endpoint.SeedRatioLimit,
 		})
 	}
 	if err := validate(cfg); err != nil {
@@ -141,6 +145,9 @@ func validate(cfg Config) error {
 		}
 		if !validTimeout(endpoint.TimeoutSeconds) {
 			return fmt.Errorf("transmission endpoint %d timeout_seconds must be positive and fit a Go duration", i+1)
+		}
+		if math.IsNaN(endpoint.SeedRatioLimit) || math.IsInf(endpoint.SeedRatioLimit, 0) || endpoint.SeedRatioLimit < 0 {
+			return fmt.Errorf("transmission endpoint %d seed_ratio_limit must be a finite, nonnegative number", i+1)
 		}
 	}
 	return nil

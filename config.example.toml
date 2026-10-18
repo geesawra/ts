@@ -38,6 +38,10 @@ url = "http://127.0.0.1:9091/transmission/rpc"
 # password = "replace-with-your-transmission-password"
 # Optional directory on the Transmission host. Omit to use its default.
 # download_dir = "/srv/downloads"
+# Per-torrent seed ratio for torrents added through ts. Defaults to zero, which
+# pauses as soon as the download completes; 1.0 seeds to roughly the torrent size.
+# Transmission's built-in limit is ratio-based, not a fixed uploaded-byte cap.
+seed_ratio_limit = 0
 timeout_seconds = 60
 
 # Add more named destinations by repeating the array-of-tables block:

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ts — Torrents</title>
+  <link rel="stylesheet" href="/static/bootstrap.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/torrents.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#torrents">Skip to torrents</a>
+  <main class="container py-4">
+    <header class="mb-4">
+      <h1>ts <small class="app-subtitle">Torrents</small></h1>
+      <nav class="d-flex flex-wrap gap-2 mt-3" aria-label="Main navigation">
+        <a class="btn-outline theme-secondary" href="/">Search</a>
+        <a class="btn-solid theme-primary" href="/torrents" aria-current="page">Torrents</a>
+      </nav>
+    </header>
+    <noscript><p class="alert theme-warning">JavaScript is required to view and manage torrents.</p></noscript>
+    <section id="torrents" aria-labelledby="torrents-heading">
+      <h2 id="torrents-heading" class="h4">Added with ts</h2>
+      <p class="form-text">Only torrents labeled <code>added-with-ts</code> are shown. Updates every 5 seconds. Choose whether to keep or delete downloaded files when removing a torrent.</p>
+      <div class="query-controls mb-3">
+        <div class="query-field">
+          <label class="form-label" for="torrent-endpoint">Transmission instance</label>
+          <select id="torrent-endpoint" class="form-control" disabled></select>
+        </div>
+        <div class="query-field">
+          <label class="form-label" for="torrent-filter">Filter by name</label>
+          <input id="torrent-filter" class="form-control" type="search" autocomplete="off">
+        </div>
+        <button id="torrent-refresh" class="btn-outline theme-secondary" type="button">Refresh</button>
+      </div>
+      <p id="torrent-status" class="small" role="status" aria-live="polite">Loading tagged torrents…</p>
+      <div id="torrent-error" class="alert theme-danger" role="alert" hidden></div>
+      <div id="torrent-list" class="torrent-list" aria-busy="true"></div>
+    </section>
+  </main>
+</body>
+</html>
