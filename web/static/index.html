@@ -105,16 +105,19 @@
       <h2 id="results-heading" class="h4">Results</h2>
       <p id="search-status" role="status" aria-live="polite">Choose indexers and search. An empty query is welcome.</p>
       <div id="search-errors" class="alert theme-warning" role="alert" hidden></div>
-      <div class="row g-3 mb-3">
-        <div class="col-12 md:col-8">
-          <label class="form-label" for="result-filter">Filter this page by title, tracker, or category</label>
-          <input id="result-filter" type="search" class="form-control" autocomplete="off">
+      <details id="result-filters" class="mb-3">
+        <summary>Result filters</summary>
+        <div class="row g-3 mt-2">
+          <div class="col-12 md:col-8">
+            <label class="form-label" for="result-filter">Filter this page by title, tracker, or category</label>
+            <input id="result-filter" type="search" class="form-control" autocomplete="off">
+          </div>
+          <div class="col-12 md:col-4">
+            <label class="form-label" for="min-seeds">Minimum seeds on this page</label>
+            <input id="min-seeds" type="number" class="form-control" min="0" step="1" value="0">
+          </div>
         </div>
-        <div class="col-12 md:col-4">
-          <label class="form-label" for="min-seeds">Minimum seeds on this page</label>
-          <input id="min-seeds" type="number" class="form-control" min="0" step="1" value="0">
-        </div>
-      </div>
+      </details>
       <p id="result-count" class="small" role="status">0 results</p>
       <div id="season-groups" class="season-groups" hidden></div>
       <div class="mobile-sort-controls mb-3">

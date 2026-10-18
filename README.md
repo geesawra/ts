@@ -3,6 +3,7 @@
 Search Jackett and send torrents to named Transmission instances. A single Go binary with a simple, light/dark-aware Bootstrap 6 UI.
 
 - Tracker/category filters, optional advanced search, sorting and pagination. Native result cards on smaller screens; a table on desktop.
+- Result-page title/tracker/category and minimum-seed filters live under **Result filters**, collapsed by default. Links with active result filters expand them automatically.
 - Optional OMDb-backed season search: aggregate tracker pages on the server, inspect parsed release components, choose a pack or episode releases, and add them sequentially.
 - Configure everything in TOML; credentials stay server-side.
 

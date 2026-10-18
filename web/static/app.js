@@ -306,6 +306,7 @@
     byId('offset').value = /^\d+$/.test(params.get('offset') || '') ? params.get('offset') : '0';
     byId('result-filter').value = params.get('filter') || '';
     byId('min-seeds').value = /^\d+$/.test(params.get('min_seeds') || '') ? params.get('min_seeds') : '0';
+    byId('result-filters').open = Boolean(byId('result-filter').value.trim()) || Number(byId('min-seeds').value) > 0;
     state.sort = sortLabels.has(params.get('sort')) ? params.get('sort') : 'seeders';
     state.direction = params.get('direction') === 'asc' ? 'asc' : 'desc';
     state.fieldValues.clear();
