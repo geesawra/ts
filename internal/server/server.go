@@ -57,7 +57,11 @@ func New(cfg config.Config) http.Handler {
 		s.metadata = omdb.New(cfg.OMDb.APIKey, time.Duration(cfg.OMDb.TimeoutSeconds)*time.Second)
 	}
 	for _, ep := range cfg.Transmission {
-		s.clients[ep.Name] = transmission.NewWithSeedRatioLimit(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second, ep.SeedRatioLimit)
+		if ep.SeedRatioLimit != nil {
+			s.clients[ep.Name] = transmission.NewWithSeedRatioLimit(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second, *ep.SeedRatioLimit)
+		} else {
+			s.clients[ep.Name] = transmission.New(ep.URL, ep.Username, ep.Password, time.Duration(ep.TimeoutSeconds)*time.Second)
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
