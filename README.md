@@ -27,7 +27,7 @@ Open **http://127.0.0.1:8080**. Restart after configuration changes. `config.tom
 
 Requires **Transmission 3.0 or newer** for torrent labels. Every **Add** action, including season batches, applies the `added-with-ts` label. Adding an existing torrent also applies this label while preserving its other labels.
 
-Torrents added through ts default to `seed_ratio_limit = 0`, which pauses them as soon as their downloads complete. Set `seed_ratio_limit` to `1.0` on a `[[transmission]]` endpoint to seed to about a 1:1 upload/download ratio. This is a ratio limit, so Transmission cannot use it to stop after exactly 1 MB uploaded; that would need a separate byte-count monitor.
+Torrents from indexers Jackett marks as public default to `seed_ratio_limit = 0`, which pauses them as soon as their downloads complete. Private or unclassified indexers keep Transmission's configured seeding behavior. Set `seed_ratio_limit` to `1.0` on a `[[transmission]]` endpoint to apply a 1:1 upload/download ratio to torrents from any indexer. This is a ratio limit, so Transmission cannot use it to stop after exactly 1 MB uploaded; that would need a separate byte-count monitor.
 
 Open **Torrents** in the main navigation (`/torrents`) and choose a configured Transmission instance. This dedicated page shows only labeled torrents, with name filtering, state, progress, size, download/upload speeds, ETA, transferred totals, and ratio. It loads automatically and refreshes every five seconds while the browser tab is visible, pausing automatic rerenders while a torrent control has focus. **Refresh** updates it manually. Torrent management stays separate from search and remains usable when Jackett is unavailable.
 

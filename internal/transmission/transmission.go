@@ -60,7 +60,7 @@ func New(endpoint, username, password string, timeout time.Duration) *Client {
 }
 
 // NewWithSeedRatioLimit applies a per-torrent seed ratio to torrents added by
-// this client. A zero ratio stops seeding as soon as a torrent completes.
+// this client. A zero ratio stops public torrents as soon as they complete.
 func NewWithSeedRatioLimit(endpoint, username, password string, timeout time.Duration, seedRatioLimit float64) *Client {
 	return newClient(endpoint, username, password, timeout, &seedRatioLimit)
 }
@@ -92,6 +92,16 @@ func newClient(endpoint, username, password string, timeout time.Duration, seedR
 
 // Add starts exactly one magnet or torrent using the library's torrent-add RPC.
 func (c *Client) Add(ctx context.Context, magnet string, torrent []byte, downloadDir string) (AddResult, error) {
+	return c.add(ctx, magnet, torrent, downloadDir, false)
+}
+
+// AddForPublicIndexer starts a torrent from an indexer explicitly marked
+// public by Jackett. This allows a zero seed ratio to be applied safely.
+func (c *Client) AddForPublicIndexer(ctx context.Context, magnet string, torrent []byte, downloadDir string) (AddResult, error) {
+	return c.add(ctx, magnet, torrent, downloadDir, true)
+}
+
+func (c *Client) add(ctx context.Context, magnet string, torrent []byte, downloadDir string, isPublic bool) (AddResult, error) {
 	if (magnet == "") == (len(torrent) == 0) {
 		return AddResult{}, errors.New("provide exactly one magnet or torrent")
 	}
@@ -130,7 +140,7 @@ func (c *Client) Add(ctx context.Context, magnet string, torrent []byte, downloa
 			return AddResult{}, err
 		}
 	}
-	if c.seedRatioLimit != nil {
+	if c.seedRatioLimit != nil && (*c.seedRatioLimit != 0 || isPublic) {
 		mode := transmissionrpc.SeedRatioModeCustom
 		limit := *c.seedRatioLimit
 		ctx = context.WithValue(ctx, hashMutationKey{}, hashMutation{method: "torrent-set", hash: *result.HashString})

@@ -299,13 +299,26 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		magnet, data = resolved.Magnet, resolved.Torrent
 	}
 	dir := ""
+	zeroRatio := false
+	var err error
 	for _, ep := range s.cfg.Transmission {
 		if ep.Name == request.Endpoint {
 			dir = ep.DownloadDir
+			zeroRatio = ep.SeedRatioLimit != nil && *ep.SeedRatioLimit == 0
 			break
 		}
 	}
-	result, err := client.Add(r.Context(), magnet, data, dir)
+	var result transmission.AddResult
+	if zeroRatio {
+		public, classifyErr := s.jackett.IsPublicIndexer(r.Context(), item.IndexerID)
+		if classifyErr == nil && public {
+			result, err = client.AddForPublicIndexer(r.Context(), magnet, data, dir)
+		} else {
+			result, err = client.Add(r.Context(), magnet, data, dir)
+		}
+	} else {
+		result, err = client.Add(r.Context(), magnet, data, dir)
+	}
 	if err != nil {
 		fail(w, 502, err.Error())
 		return

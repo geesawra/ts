@@ -142,6 +142,27 @@ func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
 	return indexers, nil
 }
 
+// IsPublicIndexer reports whether a configured Jackett indexer is explicitly
+// marked public. Unknown or disabled indexers are not considered public.
+func (c *Client) IsPublicIndexer(ctx context.Context, id string) (bool, error) {
+	if c.upstream == nil {
+		return false, errors.New("invalid Jackett base URL")
+	}
+	if !validIndexerID(id) {
+		return false, nil
+	}
+	indexers, err := c.upstream.ListIndexers(ctx)
+	if err != nil {
+		return false, safeError(ctx, err)
+	}
+	for _, indexer := range indexers {
+		if indexer.ID == id && !strings.EqualFold(indexer.Configured, "false") {
+			return strings.EqualFold(strings.TrimSpace(indexer.Type), "public"), nil
+		}
+	}
+	return false, nil
+}
+
 func applyCaps(indexer *Indexer, caps sdk.IndexerCaps) {
 	categories := []Category{}
 	for _, category := range caps.Categories.Categories {
