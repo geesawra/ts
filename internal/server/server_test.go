@@ -159,6 +159,53 @@ func TestSearchHidesCredentialsAndDownloadsCachedTorrent(t *testing.T) {
 	}
 }
 
+func TestDownloadShowsSanitizedJackettErrorBody(t *testing.T) {
+	var base string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2.0/indexers/test/results/torznab/api":
+			feed := `<rss><channel><item><title>VIP audiobook</title><guid>vip</guid><link>` + base + `/dl/test?apikey=private-key</link></item></channel></rss>`
+			io.WriteString(w, feed)
+		case "/dl/test":
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `<h1>VIP access required.</h1><p>Key: private-key</p>`)
+		default:
+			t.Errorf("unexpected upstream request %s; failed downloads must not reach Transmission", r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer upstream.Close()
+	base = upstream.URL
+	cfg := testConfig(base)
+	cfg.Server.Username, cfg.Server.Password = "", ""
+	app := httptest.NewServer(New(cfg))
+	defer app.Close()
+	resp, err := http.Get(app.URL + "/api/search?indexer=test&q=VIP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var search struct{ Results []publicResult }
+	err = json.NewDecoder(resp.Body).Decode(&search)
+	resp.Body.Close()
+	if err != nil || len(search.Results) != 1 {
+		t.Fatalf("search = %#v, error = %v", search, err)
+	}
+	payload, _ := json.Marshal(map[string]string{"id": search.Results[0].ID, "endpoint": "NAS"})
+	resp, err = http.Post(app.URL+"/api/download", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result struct{ Error string }
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadGateway || result.Error != "Jackett returned HTTP 404: VIP access required. Key: [redacted]" {
+		t.Fatalf("download = %d, %#v", resp.StatusCode, result)
+	}
+}
+
 type blockedWriter struct {
 	header           http.Header
 	entered, release chan struct{}

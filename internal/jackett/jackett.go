@@ -76,6 +76,7 @@ type SearchResponse struct {
 
 type Client struct {
 	base     *url.URL
+	apiKey   string
 	http     *http.Client
 	upstream *sdk.Client
 }
@@ -95,7 +96,7 @@ func New(baseURL, apiKey string, timeout time.Duration) *Client {
 	if err != nil {
 		return &Client{}
 	}
-	return &Client{base: base, http: httpClient, upstream: upstream}
+	return &Client{base: base, apiKey: apiKey, http: httpClient, upstream: upstream}
 }
 
 // ListIndexers uses Jackett's XML t=indexers discovery, whose embedded caps
@@ -322,8 +323,7 @@ func (t *libraryTransport) RoundTrip(request *http.Request) (*http.Response, err
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body.Close()
-		return nil, statusError(response.StatusCode)
+		return nil, responseError(response, t.apiKey)
 	}
 	if data == nil {
 		return response, nil
@@ -448,10 +448,6 @@ func safeError(ctx context.Context, err error) error {
 	return errors.New("Jackett request failed (connection, timeout, or invalid response)")
 }
 
-type statusError int
-
-func (s statusError) Error() string { return fmt.Sprintf("Jackett returned HTTP %d", s) }
-
 var errTooLarge = errors.New("Jackett response exceeds 16 MiB")
 
 func readBounded(body io.Reader, contentLength int64) ([]byte, error) {
@@ -528,8 +524,7 @@ func (c *Client) ResolveDownload(ctx context.Context, link string) (Download, er
 			u = u.ResolveReference(next)
 		default:
 			if response.StatusCode < 200 || response.StatusCode >= 300 {
-				response.Body.Close()
-				return Download{}, statusError(response.StatusCode)
+				return Download{}, responseError(response, c.apiKey)
 			}
 			data, err := readBounded(response.Body, response.ContentLength)
 			response.Body.Close()

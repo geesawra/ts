@@ -89,6 +89,7 @@ GitHub Actions runs Go tests and `go vet`, then publishes Linux amd64 images to 
 
 ## Notes
 
+- Jackett HTTP errors include a short, plain-text preview of the response body when available, with credentials and URLs redacted. Empty responses retain the HTTP status only; tracker explanations that Jackett keeps solely in its logs cannot be displayed by ts.
 - Keep the app private, or enable the optional web username/password and use HTTPS.
 - The page uses `Referrer-Policy: same-origin`: local API POSTs retain their origin, while cross-origin links receive no referrer. Opaque (`Origin: null`) and cross-origin download requests remain blocked.
 - Uses [go-jackett](https://github.com/webtor-io/go-jackett) and [transmissionrpc](https://github.com/hekmon/transmissionrpc).
