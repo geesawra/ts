@@ -29,7 +29,7 @@
   }
   const compactResults = window.matchMedia('(width < 75rem)');
   const state = {
-    indexers: [], endpoints: [], results: [], errors: [], fields: new Map(),
+    indexers: [], categoryNames: new Map(), endpoints: [], results: [], errors: [], fields: new Map(),
     fieldValues: new Map(), downloads: new Map(), destinations: new Map(),
     seasonChoices: new Map(), seasonDestinations: new Map(), seasonDownloads: new Map(),
     omdbEnabled: false, seriesID: '', seriesController: null, seriesGeneration: 0,
@@ -80,6 +80,16 @@
     return new Set((indexer.modes?.[mode] || []).map((name) => String(name).toLowerCase()));
   }
 
+  function categoryName(id, indexerID) {
+    const value = String(id);
+    const name = state.categoryNames.get(indexerID)?.get(value);
+    return name || (/^\d+$/.test(value) ? `Unknown category (${value})` : value);
+  }
+
+  function resultCategoryNames(result) {
+    return (result.categories || []).map((id) => categoryName(id, result.indexer_id));
+  }
+
   function seasonMode() {
     return state.omdbEnabled && byId('complete-seasons').checked;
   }
@@ -97,7 +107,6 @@
 
   function updateSeasonControls() {
     const supportedMode = ['search', 'tvsearch'].includes(byId('mode').value);
-    byId('season-search-controls').hidden = !state.omdbEnabled;
     byId('complete-seasons').disabled = !state.omdbEnabled || !supportedMode;
     if (!supportedMode && byId('complete-seasons').checked) {
       byId('complete-seasons').checked = false;
@@ -112,7 +121,9 @@
     byId('offset').disabled = active;
     const advancedSeason = state.fields.get('season');
     if (advancedSeason && active) advancedSeason.disabled = true;
-    message('season-mode-note', supportedMode ? '' : 'Season search is available in General search or TV mode.');
+    message('season-mode-note', !state.omdbEnabled
+      ? 'To enable TV show assembly, set [omdb] api_key in config.toml and restart the server.'
+      : supportedMode ? '' : 'TV show assembly is available in General search or TV mode.');
   }
 
   async function findSeries() {
@@ -206,11 +217,11 @@
     const categories = new Map();
     for (const indexer of selected) {
       for (const category of indexer.categories || []) {
-        if (!categories.has(String(category.id))) categories.set(String(category.id), category.name);
+        if (!categories.has(String(category.id))) categories.set(String(category.id), categoryName(category.id, indexer.id));
       }
     }
     categoryList.replaceChildren();
-    for (const [id, name] of Array.from(categories).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
+    for (const [id, name] of Array.from(categories).sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: 'base' }) || a[0].localeCompare(b[0], undefined, { numeric: true }))) {
       const wrapper = element('div', undefined, 'selector-choice');
       const input = element('input', undefined, 'check');
       input.type = 'checkbox';
@@ -218,8 +229,9 @@
       input.id = `category-${id}`;
       input.value = id;
       input.checked = chosen.has(id);
-      const label = element('label', `${id} — ${name}`);
+      const label = element('label', name);
       label.htmlFor = input.id;
+      label.title = `Category ID: ${id}`;
       wrapper.append(input, label);
       categoryList.append(wrapper);
     }
@@ -242,7 +254,7 @@
         entry.append(element('p', `${modes.get(mode) || mode}: ${fields?.length ? fields.join(', ') : 'no optional parameters advertised'}`, 'small'));
       }
       if (!Object.keys(indexer.modes || {}).length) entry.append(element('p', 'No supported search modes advertised.', 'small'));
-      const categories = (indexer.categories || []).map((category) => `${category.id} ${category.name}`);
+      const categories = (indexer.categories || []).map((category) => `${categoryName(category.id, indexer.id)} (${category.id})`);
       entry.append(element('p', `Categories: ${categories.join(', ') || 'none advertised'}`, 'small'));
       container.append(entry);
     }
@@ -848,7 +860,7 @@
     const filter = byId('result-filter').value.trim().toLocaleLowerCase();
     const minSeeds = Math.max(0, Number(byId('min-seeds').value) || 0);
     const results = state.results.filter((result) => {
-      const text = [result.title, result.indexer, ...(result.categories || [])].join(' ').toLocaleLowerCase();
+      const text = [result.title, result.indexer, ...resultCategoryNames(result), ...(result.categories || [])].join(' ').toLocaleLowerCase();
       return text.includes(filter) && (Number(result.seeders) || 0) >= minSeeds;
     });
     results.sort((a, b) => {
@@ -911,7 +923,9 @@
   }
 
   function appendResultFactors(container, result) {
-    container.append(element('div', (result.categories || []).join(', ') || 'No categories', 'result-meta'));
+    const categories = element('div', resultCategoryNames(result).join(', ') || 'No categories', 'result-meta');
+    if (result.categories?.length) categories.title = `Category IDs: ${result.categories.join(', ')}`;
+    container.append(categories);
     const factorText = (value) => Number.isFinite(value) ? `${value.toLocaleString()}×` : 'unknown';
     container.append(element('div', `Download ${factorText(result.download_volume_factor)} · Upload ${factorText(result.upload_volume_factor)}`, 'result-meta'));
   }
@@ -1074,6 +1088,13 @@
       state.endpoints = Array.isArray(config.endpoints) ? config.endpoints : [];
       state.omdbEnabled = config.omdb_enabled === true;
       state.indexers = Array.isArray(discovery.indexers) ? discovery.indexers : [];
+      state.categoryNames = new Map(state.indexers.map((indexer) => [indexer.id, new Map(
+        (indexer.categories || []).map((category) => {
+          const id = String(category.id);
+          const name = String(category.name || '').trim();
+          return [id, name === id ? '' : name];
+        }),
+      )]));
       byId('indexer-list').replaceChildren();
       state.indexers.forEach((indexer, index) => {
         const wrapper = element('div', undefined, 'selector-choice');

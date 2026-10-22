@@ -3,6 +3,7 @@
 Search Jackett and send torrents to named Transmission instances. A single Go binary with a simple, light/dark-aware Bootstrap 6 UI.
 
 - Tracker/category filters, optional advanced search, sorting and pagination. Native result cards on smaller screens; a table on desktop.
+- Categories use the names advertised by each tracker in filters and results. Hover for numeric IDs; result filters accept either names or IDs. Unadvertised numeric categories are labeled as unknown.
 - Result-page title/tracker/category and minimum-seed filters live under **Result filters**, collapsed by default. Links with active result filters expand them automatically.
 - Optional OMDb-backed season search: aggregate tracker pages on the server, inspect parsed release components, choose a pack or episode releases, and add them sequentially.
 - A label-scoped Transmission panel: track progress and transfer stats, start/pause torrents, or remove them with a choice to keep or delete downloaded files.
@@ -48,9 +49,9 @@ api_key = "your-omdb-key"
 # timeout_seconds = 60
 ```
 
-Without a key, metadata and season-search controls stay hidden; ordinary torrent search works unchanged. This key is separate from Jackett's configuration and stays server-side. Successful metadata is cached for 15 minutes (up to 256 entries).
+Without a key, the **Assemble entire TV show** checkbox stays visible but disabled, with setup instructions. This key is separate from Jackett's configuration and stays server-side. Successful metadata is cached for 15 minutes (up to 256 entries).
 
-1. Enter a show title and tick **Show complete seasons** in General search or TV mode.
+1. Enter a show title and tick **Assemble entire TV show** in General search or TV mode.
 2. Click **Find series**, then choose the exact title/year/IMDb identity. Optionally enter a season number; blank searches all seasons.
 3. Search and expand a season proposal. Choose a bundle by resolution, source, codec, and release group; its episode coverage, gaps, and selected torrent count are shown without listing every episode.
 4. Expand **Inspect or override individual torrents**, then an episode, to inspect original titles, parsed components, tracker, seeds, and size; choose an alternative or skip it. Review the selected bundle or season pack, then select a Transmission destination and add it. Multi-episode torrents are added once; per-release outcomes report additions, duplicates, and failures.

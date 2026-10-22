@@ -34,14 +34,14 @@
           <button id="cancel-search" class="btn-outline theme-secondary" type="button" hidden>Cancel search</button>
         </div>
         <p id="query-help" class="form-text mb-3">Leave empty for the latest releases.</p>
-        <fieldset id="season-search-controls" class="season-search-controls mb-3" hidden>
-          <legend class="form-label">Series metadata</legend>
+        <fieldset id="season-search-controls" class="season-search-controls mb-3">
+          <legend class="form-label">TV show assembly</legend>
           <div class="selector-choice">
-            <input id="complete-seasons" class="check" type="checkbox">
-            <label for="complete-seasons">Show complete seasons</label>
+            <input id="complete-seasons" class="check" type="checkbox" aria-describedby="season-mode-note">
+            <label for="complete-seasons">Assemble entire TV show</label>
           </div>
           <div id="series-options" hidden>
-            <p class="form-text">Find a series from the query, then choose its exact title, year, and IMDb ID. Coverage means the OMDb episode inventory, not that a season has finished airing.</p>
+            <p class="form-text">Find a series from the query, then choose its exact title, year, and IMDb ID. Leave season blank to search the entire show, or enter a number for one season. Coverage means the OMDb episode inventory, not that a season has finished airing.</p>
             <div class="query-controls">
               <button id="find-series" class="btn-outline theme-secondary" type="button">Find series</button>
               <div class="query-field">
